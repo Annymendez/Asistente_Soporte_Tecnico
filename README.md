@@ -2,15 +2,15 @@
 
 ## Descripción del proyecto
 
-Este proyecto desarrolla un asistente de IA que funciona de manera **local**
+Este proyecto desarrolla un asistente de IA que funciona de manera local
 (preservando la privacidad de los datos) capaz de leer una base de
-conocimientos específica —en este caso, **manuales técnicos e instructivos
-de producto**— para responder preguntas de soporte técnico y guiar al
+conocimientos específica en este caso, manuales técnicos e instructivos
+de producto para responder preguntas de soporte técnico y guiar al
 usuario paso a paso hacia la solución de su problema.
 
 ## Enfoque elegido: Analista de Soporte Técnico
 
-Se eligió el enfoque de **Analista de Soporte Técnico** porque:
+Se eligió el enfoque de Analista de Soporte Técnico porque:
 
 - Los manuales de producto tienen una estructura clara (secciones,
   advertencias, pasos numerados) que facilita delimitar el contexto que
