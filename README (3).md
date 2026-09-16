@@ -109,5 +109,5 @@ Toda respuesta del asistente sigue este esquema JSON fijo:
 
 ## Autor
 
-Anamaría Méndez Saavedra — Ingeniería de Sistemas, Fundación Universitaria
+Anamaría Méndez Saavedra y Lina María Parra Torrijos — Ingeniería de Sistemas, Fundación Universitaria
 Konrad Lorenz.
