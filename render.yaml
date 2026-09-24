@@ -1,0 +1,15 @@
+# Blueprint opcional de Render (Dashboard → New → Blueprint, apuntando a este repo).
+# También puedes crear el servicio a mano sin este archivo: New → Web Service,
+# Build Command "pip install -r requirements.txt", Start Command del Procfile.
+services:
+  - type: web
+    name: asistente-soporte-tecnico
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false   # se pega el valor real desde el Dashboard, nunca en el repo
+      - key: PYTHON_VERSION
+        value: 3.11.9

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asistente de Soporte Técnico</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <!-- KaTeX (opcional): dibuja las fórmulas \( ... \) que devuelva el modelo -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <!-- chat.js va primero: si el CDN tarda o no hay internet, el chat funciona igual -->
+  <script defer src="{{ url_for('static', filename='js/chat.js') }}"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+</head>
+<body>
+  <template id="robot">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="5" y="7.5" width="14" height="10" rx="3.2" fill="currentColor"/>
+      <rect x="2.6" y="10.6" width="2" height="4" rx=".8" fill="currentColor"/>
+      <rect x="19.4" y="10.6" width="2" height="4" rx=".8" fill="currentColor"/>
+      <circle cx="9.2" cy="12.4" r="1.5" fill="#262626"/>
+      <circle cx="14.8" cy="12.4" r="1.5" fill="#262626"/>
+      <path d="M12 7.5V4.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="12" cy="3.7" r="1.3" fill="currentColor"/>
+    </svg>
+  </template>
+
+  <main class="chat" id="chat">
+    <header class="chat-header">
+      <div class="avatar"><div id="avatar-inner"></div></div>
+      <div class="who">
+        <strong>soporte_tecnico</strong>
+        <span id="status">Activo(a) ahora</span>
+      </div>
+      <button id="gear" class="icon-btn" title="Ajustes" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+        </svg>
+      </button>
+    </header>
+
+    <div id="docs" class="docs"></div>
+
+    <section id="messages" class="messages" aria-live="polite"></section>
+
+    <footer class="composer-wrap">
+      <div class="composer">
+        <button id="attach" class="attach" title="Agregar manual (PDF)" aria-label="Agregar manual (PDF)">+</button>
+        <input id="file" type="file" accept="application/pdf,.pdf" multiple hidden>
+        <input id="input" type="text" placeholder="Escribe un mensaje…" autocomplete="off">
+        <button id="send" class="send" disabled>Enviar</button>
+      </div>
+    </footer>
+
+    <div id="settings" class="modal" hidden>
+      <div class="modal-card">
+        <h3>Ajustes</h3>
+        <label>Groq API key
+          <input id="s-key" type="password" autocomplete="off" placeholder="gsk_…">
+        </label>
+        <label>Modelo
+          <select id="s-model">
+            <option>openai/gpt-oss-120b</option>
+            <option>llama-3.3-70b-versatile</option>
+            <option>llama-3.1-8b-instant</option>
+          </select>
+        </label>
+        <label>Fragmentos a recuperar (k)
+          <input id="s-k" type="number" min="1" max="20">
+        </label>
+        <p id="s-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button id="s-reset" class="btn danger">Borrar índice</button>
+          <span class="spacer"></span>
+          <button id="s-close" class="btn ghost">Cerrar</button>
+          <button id="s-save" class="btn primary">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

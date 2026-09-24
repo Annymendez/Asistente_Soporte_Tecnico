@@ -1,0 +1,212 @@
+/* Asistente RAG — estilo Instagram Direct (tema oscuro) */
+:root {
+  /* Paleta Konrad Lorenz: azul institucional + dorado, sobre el mismo look de chat oscuro.
+     Si tienes los códigos exactos del manual de marca, dime los HEX y los ajusto. */
+  --bg: #000;
+  --card: #10151d;
+  --line: #223047;
+  --bubble: #1b2534;
+  --field: #1b2534;
+  --text: #f5f5f5;
+  --muted: #9fb0c3;
+  --blue: #e2ab3d;                 /* dorado: enlaces, botón "Enviar" habilitado */
+  --blue-off: #6b6247;
+  --grad: linear-gradient(135deg, #0a2f5c 0%, #15488c 55%, #e2ab3d 100%);
+  --ring: linear-gradient(45deg, #0a2f5c, #15488c, #2e7dc0, #e2ab3d, #c98a1f);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+
+/* ── Tarjeta ─────────────────────────────────────────────── */
+.chat {
+  position: relative;
+  width: 100%; max-width: 640px; height: 100%; max-height: 820px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.chat.drag::after {
+  content: "Suelta tu PDF para agregarlo";
+  position: absolute; inset: 0; z-index: 5;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, .78); color: #fff; font-size: 18px; font-weight: 600;
+  border: 2px dashed var(--blue); border-radius: 22px;
+}
+
+/* ── Cabecera ────────────────────────────────────────────── */
+.chat-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px; border-bottom: 1px solid var(--line);
+}
+.avatar { width: 48px; height: 48px; border-radius: 50%; padding: 2.5px; background: var(--ring); flex: none; }
+.avatar > div {
+  width: 100%; height: 100%; border-radius: 50%;
+  background: var(--card); border: 2px solid var(--card);
+  display: grid; place-items: center; color: #f5f5f5;
+}
+.avatar svg { width: 26px; height: 26px; }
+.avatar svg circle[fill="#262626"] { fill: var(--card); }
+.who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1; }
+.who strong { font-size: 16px; }
+.who span { font-size: 13px; color: var(--muted); }
+.icon-btn {
+  background: none; border: 0; color: var(--text); cursor: pointer;
+  width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+}
+.icon-btn:hover { background: #1f1f1f; }
+
+/* ── Documentos ──────────────────────────────────────────── */
+.docs {
+  display: flex; gap: 8px; padding: 10px 20px; overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+.docs:empty { display: none; }
+.doc-chip {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px 5px 6px; border-radius: 999px;
+  background: #1c1c1c; border: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); max-width: 240px;
+}
+.doc-chip i {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--ring); flex: none;
+  display: grid; place-items: center; font-style: normal; font-size: 8px; font-weight: 700; color: #fff;
+}
+.doc-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Mensajes ────────────────────────────────────────────── */
+.messages { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; }
+.messages::-webkit-scrollbar { width: 8px; }
+.messages::-webkit-scrollbar-thumb { background: #333; border-radius: 8px; }
+
+.row { display: flex; align-items: flex-end; gap: 8px; margin-top: 3px; }
+.row.user { justify-content: flex-end; }
+.row.bot + .row.user, .row.user + .row.bot { margin-top: 14px; }
+.col { display: flex; flex-direction: column; min-width: 0; }
+.row.user .col { align-items: flex-end; max-width: 80%; }
+/* mensajes del bot: rejilla → el avatar queda junto a la burbuja y lo demás (fuentes, botones) debajo */
+.row.bot { display: grid; grid-template-columns: 28px auto; column-gap: 8px; justify-content: start; max-width: calc(80% + 36px); }
+.row.bot .col { display: contents; }
+.row.bot .av-sm { grid-column: 1; grid-row: 1; align-self: end; }
+.row.bot .bubble { grid-column: 2; grid-row: 1; justify-self: start; }
+.row.bot .col > :not(.bubble) { grid-column: 2; }
+.av-sm {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--bubble);
+  display: grid; place-items: center; color: #f5f5f5;
+}
+.av-sm svg { width: 18px; height: 18px; }
+.av-sm svg circle[fill="#262626"] { fill: var(--bubble); }
+.row.bot:has(+ .row.bot) .av-sm { visibility: hidden; }
+
+.bubble {
+  padding: 10px 16px; border-radius: 22px; line-height: 1.45; font-size: 15px;
+  overflow-wrap: anywhere; max-width: 100%;
+}
+.row.bot .bubble { background: var(--bubble); }
+.row.user .bubble { background: var(--grad) fixed; color: #fff; white-space: pre-wrap; }
+.bubble.plain { white-space: pre-wrap; }
+.bubble.error { background: #3a1418; color: #ffb3bb; }
+
+.bubble p { margin: 0; }
+.bubble p + p, .bubble p + ul, .bubble p + ol, .bubble ul + p, .bubble ol + p, .bubble .tbl + p, .bubble p + .tbl { margin-top: 8px; }
+.bubble p.h { font-weight: 700; }
+.bubble ul, .bubble ol { margin: 6px 0; padding-left: 22px; }
+.bubble li + li { margin-top: 2px; }
+.bubble code { background: #1a1a1a; padding: 1px 6px; border-radius: 6px; font-size: .9em; }
+.bubble .tbl { overflow-x: auto; margin: 6px 0; }
+.bubble table { border-collapse: collapse; font-size: 13px; }
+.bubble th, .bubble td { border: 1px solid #3a3a3a; padding: 4px 9px; text-align: left; }
+.bubble th { background: #1e1e1e; }
+.bubble .katex-display { overflow-x: auto; overflow-y: hidden; margin: .6em 0; }
+
+/* respuesta estructurada del asistente de soporte técnico */
+.bubble .badge {
+  display: inline-block; padding: 3px 11px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; border: 1px solid;
+}
+.bubble .warn {
+  margin-top: 10px; padding: 8px 12px; border-radius: 12px;
+  background: #3a1418; color: #ff9aa2; font-size: 13px; font-weight: 600;
+}
+
+/* progreso de indexado */
+.bar { height: 6px; border-radius: 99px; background: #3a3a3a; overflow: hidden; margin-top: 10px; min-width: 220px; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--blue); transition: width .3s ease; }
+
+/* escribiendo… */
+.bubble.typing { display: flex; gap: 5px; padding: 15px 18px; }
+.bubble.typing span { width: 8px; height: 8px; border-radius: 50%; background: #8e8e8e; animation: blink 1.2s infinite ease-in-out; }
+.bubble.typing span:nth-child(2) { animation-delay: .2s; }
+.bubble.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+
+/* fuentes y contexto */
+.meta { font-size: 12px; color: var(--muted); margin: 5px 4px 0; }
+details.ctx { margin: 4px 4px 0; font-size: 12px; color: var(--muted); max-width: 100%; }
+details.ctx summary { cursor: pointer; color: var(--blue); width: fit-content; }
+details.ctx h4 { margin: 12px 0 6px; color: var(--text); font-size: 12px; }
+details.ctx pre {
+  white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 8px; padding: 9px 11px;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 12px;
+  font: 12px/1.45 Consolas, "Courier New", monospace; color: #d6d6d6; max-height: 240px; overflow: auto;
+}
+details.ctx .frag b { color: var(--text); font-weight: 600; }
+
+/* respuestas rápidas */
+.quick { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+.quick button {
+  background: transparent; color: var(--blue); border: 1px solid var(--blue);
+  border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.quick button:hover { background: rgba(0, 149, 246, .12); }
+
+/* ── Barra de mensaje ────────────────────────────────────── */
+.composer-wrap { border-top: 1px solid var(--line); padding: 14px 22px 16px; }
+.composer {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--field); border-radius: 999px; padding: 8px 20px 8px 8px;
+}
+.attach {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--grad); color: #fff; font-size: 24px; line-height: 1; padding: 0 0 2px;
+}
+.attach:disabled { opacity: .4; cursor: default; }
+.composer input {
+  flex: 1; min-width: 0; background: transparent; border: 0; outline: 0;
+  color: var(--text); font-size: 15px; padding: 10px 4px;
+}
+.composer input::placeholder { color: #9b9b9b; }
+.send { background: none; border: 0; color: var(--blue); font-weight: 600; font-size: 15px; cursor: pointer; }
+.send:disabled { opacity: .35; cursor: default; }
+
+/* ── Ajustes ─────────────────────────────────────────────── */
+.modal { position: absolute; inset: 0; z-index: 10; background: rgba(0, 0, 0, .7); display: grid; place-items: center; padding: 18px; }
+.modal[hidden] { display: none; }
+.modal-card { width: 100%; max-width: 400px; background: #1a1a1a; border: 1px solid var(--line); border-radius: 18px; padding: 20px; }
+.modal-card h3 { margin: 0 0 8px; font-size: 17px; }
+.modal-card label { display: block; margin-top: 14px; font-size: 13px; color: var(--muted); }
+.modal-card input, .modal-card select {
+  width: 100%; margin-top: 6px; padding: 10px 12px; border-radius: 10px;
+  background: var(--field); color: var(--text); border: 1px solid #363636; font-size: 14px; outline: 0;
+}
+.modal-card input:focus, .modal-card select:focus { border-color: var(--blue); }
+.modal-msg { min-height: 18px; margin: 10px 0 0; font-size: 12px; color: #6fd08c; }
+.modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.spacer { flex: 1; }
+.btn { border: 0; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; }
+.btn.primary { background: var(--blue); }
+.btn.ghost { background: #2b2b2b; }
+.btn.danger { background: transparent; color: #ff6b7a; padding-left: 0; }
+.btn.danger.armed { background: #5a1b22; color: #fff; padding-left: 14px; }
+
+@media (max-width: 520px) {
+  body { padding: 0; }
+  .chat { max-height: none; border: 0; border-radius: 0; }
+}
