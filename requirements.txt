@@ -9,3 +9,4 @@ langchain-groq
 sentence-transformers
 chromadb
 pypdf
+gunicorn
