@@ -224,17 +224,32 @@ class RagEngine:
     # -- piezas del pipeline ---------------------------------------------------
     def _get_embeddings(self):
         if self._embeddings is None:
-            # Se usa fastembed (ONNX runtime) en vez de sentence-transformers/
-            # HuggingFaceEmbeddings (que cargan PyTorch completo) porque el plan
-            # gratuito de Render tiene solo 512 MB de RAM: PyTorch por sí solo
-            # supera ese límite y hacía que el servicio se reiniciara por
-            # "exceeded its memory limit". fastembed usa el MISMO modelo de
-            # embeddings (paraphrase-multilingual-MiniLM-L12-v2, ver EMBEDDING_MODEL)
-            # pero en formato ONNX cuantizado, con una huella de memoria mucho menor.
-            from langchain_community.embeddings import FastEmbedEmbeddings
+            # El plan gratuito de Render solo da 512 MB de RAM, y CUALQUIER
+            # modelo de embeddings cargado EN EL PROCESO (sentence-transformers
+            # con PyTorch, o incluso fastembed con ONNX runtime) se queda corto
+            # sumado a Flask + ChromaDB + LangChain — se probaron ambos y los
+            # dos tumbaron el servicio con "Ran out of memory".
+            #
+            # La solución es no cargar ningún modelo localmente: se usa la API
+            # de inferencia de Hugging Face (HuggingFaceEndpointEmbeddings),
+            # que manda el texto a los servidores de Hugging Face y solo
+            # devuelve el vector — el proceso de Render casi no gasta memoria
+            # en esto. Requiere un token gratuito de Hugging Face en la
+            # variable de entorno HF_TOKEN (huggingface.co/settings/tokens).
+            from langchain_huggingface import HuggingFaceEndpointEmbeddings
 
-            self._embeddings = FastEmbedEmbeddings(
-                model_name=f"sentence-transformers/{EMBEDDING_MODEL}",
+            hf_token = os.getenv("HF_TOKEN")
+            if not hf_token:
+                raise ValueError(
+                    "Falta HF_TOKEN. Crea un token gratuito en "
+                    "https://huggingface.co/settings/tokens y defínelo como "
+                    "HF_TOKEN en el archivo .env (local) o en las variables de "
+                    "entorno de Render."
+                )
+            self._embeddings = HuggingFaceEndpointEmbeddings(
+                model=EMBEDDING_MODEL,
+                task="feature-extraction",
+                huggingfacehub_api_token=hf_token,
             )
         return self._embeddings
 
