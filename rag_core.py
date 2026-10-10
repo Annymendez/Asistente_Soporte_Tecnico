@@ -297,10 +297,22 @@ class RagEngine:
 
     # -- reanudar: cargar base vectorial existente -----------------------------
     def load_existing(self) -> int:
+        print(f"[CARGA] Buscando índice existente en: {self.persist_dir.resolve()}", flush=True)
         if not self.persist_dir.exists():
+            print("[CARGA] La carpeta NO existe. No hay índice pre-armado para cargar.", flush=True)
             return 0
-        store = self._open_store()
-        n = store._collection.count()
+        contenido = list(self.persist_dir.rglob("*"))
+        print(f"[CARGA] La carpeta SÍ existe. Contiene {len(contenido)} elementos: "
+              f"{[str(p.relative_to(self.persist_dir)) for p in contenido]}", flush=True)
+        try:
+            store = self._open_store()
+            n = store._collection.count()
+        except Exception as e:
+            import traceback
+            print(f"[CARGA] ERROR al abrir el índice: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            return 0
+        print(f"[CARGA] Índice abierto. Fragmentos encontrados: {n}", flush=True)
         self._vector_store = store if n > 0 else None
         return n
 

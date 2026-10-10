@@ -3,3 +3,9 @@
 # (autocrlf), porque eso puede corromperlos silenciosamente al subirlos
 # desde Windows. Se marcan explícitamente como binarios.
 chroma/** -text -diff
+
+# Los manuales en PDF también son binarios: si Git los convierte con
+# autocrlf al subirlos desde Windows, PyPDFLoader puede fallar en silencio
+# al leerlos en Render (o simplemente no encontrarlos bien formados).
+*.pdf -text -diff
+*.docx -text -diff
