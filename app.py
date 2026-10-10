@@ -71,6 +71,7 @@ def _archivos_manuales() -> list[Path]:
 
 def _indexar_en_segundo_plano(paths: list[Path], replace: bool = True):
     def tarea():
+        print(f"[INDEXACION] Hilo de indexacion iniciado. Archivos: {[str(p) for p in paths]}", flush=True)
         with LOCK:
             STATE["indexando"] = True
             STATE["error"] = None
@@ -78,12 +79,15 @@ def _indexar_en_segundo_plano(paths: list[Path], replace: bool = True):
             STATE["mensaje"] = "Iniciando…"
 
         def progreso(frac, msg):
+            print(f"[INDEXACION] progreso={frac:.2f} mensaje={msg!r}", flush=True)
             with LOCK:
                 STATE["progreso"] = frac
                 STATE["mensaje"] = msg
 
         try:
+            print("[INDEXACION] Llamando a engine.index()...", flush=True)
             stats = engine.index(paths, progress=progreso, replace=replace)
+            print(f"[INDEXACION] engine.index() terminó OK: {stats}", flush=True)
             with LOCK:
                 STATE["ultimo_resultado"] = {
                     "archivos": stats.archivos,
@@ -93,12 +97,16 @@ def _indexar_en_segundo_plano(paths: list[Path], replace: bool = True):
                 STATE["mensaje"] = "Indexación completa."
                 STATE["progreso"] = 1.0
         except Exception as e:
+            import traceback
+            print(f"[INDEXACION] ERROR: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
             with LOCK:
                 STATE["error"] = str(e)
                 STATE["mensaje"] = "Error durante la indexación."
         finally:
             with LOCK:
                 STATE["indexando"] = False
+            print("[INDEXACION] Hilo de indexacion terminado.", flush=True)
 
     threading.Thread(target=tarea, daemon=True).start()
 
