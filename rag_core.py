@@ -250,6 +250,13 @@ class RagEngine:
             self._embeddings = CohereEmbeddings(
                 model=EMBEDDING_MODEL,
                 cohere_api_key=cohere_key,
+                # Sin esto, si la red saliente de Render se queda "colgada" al
+                # intentar llegar a la API de Cohere (sin responder, sin dar
+                # error), el cliente esperaría indefinidamente. Con esto, si no
+                # hay respuesta en 25s falla con un error CLARO en los logs en
+                # vez de quedarse pegado para siempre en "Iniciando...".
+                request_timeout=25,
+                max_retries=2,
             )
         return self._embeddings
 
