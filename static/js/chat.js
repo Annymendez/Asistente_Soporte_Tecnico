@@ -207,11 +207,8 @@ async function consultarEstado() {
 }
 
 function iniciarSondeoEstado() {
-  if (sondeoActivo) clearInterval(sondeoActivo);
-  sondeoActivo = setInterval(async () => {
-    const sigueIndexando = await consultarEstado();
-    if (!sigueIndexando) clearInterval(sondeoActivo);
-  }, 1500);
+  if (sondeoActivo) return; // ya está corriendo, no duplicar el intervalo
+  sondeoActivo = setInterval(consultarEstado, 1500);
 }
 
 // Autoajuste de altura del textarea
@@ -220,4 +217,9 @@ $inputPregunta.addEventListener("input", () => {
   $inputPregunta.style.height = Math.min($inputPregunta.scrollHeight, 120) + "px";
 });
 
-consultarEstado().then((indexando) => { if (indexando) iniciarSondeoEstado(); });
+// Se consulta el estado de forma continua mientras la página esté abierta
+// (y no solo cuando el propio navegador disparó la indexación), para no
+// perderse el progreso de una indexación que ya estaba en curso al cargar
+// (ej. el bootstrap automático al reiniciarse el servicio en Render).
+consultarEstado();
+iniciarSondeoEstado();
