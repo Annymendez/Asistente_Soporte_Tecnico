@@ -6,11 +6,14 @@ langchain-core>=1.6
 langchain-community>=0.4
 langchain-text-splitters>=1.1
 langchain-chroma>=1.1
-langchain-huggingface>=1.2
 langchain-groq>=1.1
 
+# fastembed (ONNX, sin PyTorch) en vez de sentence-transformers/langchain-huggingface:
+# el plan gratuito de Render tiene 512 MB de RAM y PyTorch por sí solo lo supera.
+# Mismo modelo de embeddings, motor de inferencia más liviano.
+fastembed>=0.4
+
 chromadb>=1.5
-sentence-transformers>=6.1
 pypdf>=5.9
 docx2txt>=0.9
 beautifulsoup4>=4.15

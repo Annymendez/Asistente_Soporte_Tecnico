@@ -9,3 +9,10 @@ ragas>=0.4
 datasets>=3.0
 pandas>=2.2
 matplotlib>=3.9
+
+# Usadas por el LLM-juez de Ragas (answer_relevancy necesita un modelo de
+# embeddings). Aquí sí se usa sentence-transformers/HuggingFaceEmbeddings
+# normal (no fastembed) porque esto corre en tu máquina local, no en el
+# plan gratuito de Render con memoria limitada.
+langchain-huggingface>=1.2
+sentence-transformers>=6.1

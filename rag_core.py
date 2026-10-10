@@ -25,7 +25,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from asistente_soporte_tecnico import construir_mensajes_para_llm
 
-# Configuración 
+# ── Configuración ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_DIR = BASE_DIR / "chroma"
 COLLECTION_NAME = "manuales_soporte"
@@ -159,9 +159,9 @@ class IndexStats:
 class RagResult:
     pregunta: str
     fragmentos: list
-    mensajes: list          
-    respuesta_cruda: str    
-    respuesta: dict | None   
+    mensajes: list          # mensajes system + few-shot + historial + turno real, tal como se enviaron al LLM
+    respuesta_cruda: str     # texto tal cual lo devolvió el modelo
+    respuesta: dict | None   # JSON ya parseado (diagnostico, pasos_solucion, ...) o None si falló el parseo
     error_parseo: str | None = None
 
     def fuentes(self) -> str:
@@ -185,7 +185,7 @@ class RagResult:
         return "\n\n".join(f"--- {m['role'].upper()} ---\n{m['content']}" for m in self.mensajes)
 
 
-# Motor RAG 
+# ── Motor RAG ───────────────────────────────────────────────────────────────
 class RagEngine:
     def __init__(
         self,
@@ -224,12 +224,17 @@ class RagEngine:
     # -- piezas del pipeline ---------------------------------------------------
     def _get_embeddings(self):
         if self._embeddings is None:
-            from langchain_huggingface import HuggingFaceEmbeddings
+            # Se usa fastembed (ONNX runtime) en vez de sentence-transformers/
+            # HuggingFaceEmbeddings (que cargan PyTorch completo) porque el plan
+            # gratuito de Render tiene solo 512 MB de RAM: PyTorch por sí solo
+            # supera ese límite y hacía que el servicio se reiniciara por
+            # "exceeded its memory limit". fastembed usa el MISMO modelo de
+            # embeddings (paraphrase-multilingual-MiniLM-L12-v2, ver EMBEDDING_MODEL)
+            # pero en formato ONNX cuantizado, con una huella de memoria mucho menor.
+            from langchain_community.embeddings import FastEmbedEmbeddings
 
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name=EMBEDDING_MODEL,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True},
+            self._embeddings = FastEmbedEmbeddings(
+                model_name=f"sentence-transformers/{EMBEDDING_MODEL}",
             )
         return self._embeddings
 
