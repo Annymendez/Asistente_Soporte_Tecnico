@@ -29,7 +29,7 @@ from asistente_soporte_tecnico import construir_mensajes_para_llm
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_DIR = BASE_DIR / "chroma"
 COLLECTION_NAME = "manuales_soporte"
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL = "embed-multilingual-v3.0"  # modelo de embeddings de Cohere
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -226,30 +226,30 @@ class RagEngine:
         if self._embeddings is None:
             # El plan gratuito de Render solo da 512 MB de RAM, y CUALQUIER
             # modelo de embeddings cargado EN EL PROCESO (sentence-transformers
-            # con PyTorch, o incluso fastembed con ONNX runtime) se queda corto
-            # sumado a Flask + ChromaDB + LangChain — se probaron ambos y los
-            # dos tumbaron el servicio con "Ran out of memory".
-            #
-            # La solución es no cargar ningún modelo localmente: se usa la API
-            # de inferencia de Hugging Face (HuggingFaceEndpointEmbeddings),
-            # que manda el texto a los servidores de Hugging Face y solo
-            # devuelve el vector — el proceso de Render casi no gasta memoria
-            # en esto. Requiere un token gratuito de Hugging Face en la
-            # variable de entorno HF_TOKEN (huggingface.co/settings/tokens).
-            from langchain_huggingface import HuggingFaceEndpointEmbeddings
+            # con PyTorch, o fastembed con ONNX runtime) se queda corto sumado
+            # a Flask + ChromaDB + LangChain — ambos tumbaron el servicio con
+            # "Ran out of memory". Se probó luego la API de inferencia gratuita
+            # de Hugging Face, pero quedó colgada indefinidamente sin responder
+            # (ese nivel gratuito ha ido retirando soporte para varios modelos
+            # de embeddings). Se usa en su lugar la API de **Cohere**: tiene un
+            # nivel gratuito confiable pensado específicamente para RAG, con un
+            # modelo de embeddings multilingüe. El proceso de Render no carga
+            # ningún modelo, solo hace una llamada HTTP por cada tanda de
+            # fragmentos. Requiere una API key gratuita de Cohere en la
+            # variable de entorno COHERE_API_KEY (dashboard.cohere.com).
+            from langchain_cohere import CohereEmbeddings
 
-            hf_token = os.getenv("HF_TOKEN")
-            if not hf_token:
+            cohere_key = os.getenv("COHERE_API_KEY")
+            if not cohere_key:
                 raise ValueError(
-                    "Falta HF_TOKEN. Crea un token gratuito en "
-                    "https://huggingface.co/settings/tokens y defínelo como "
-                    "HF_TOKEN en el archivo .env (local) o en las variables de "
-                    "entorno de Render."
+                    "Falta COHERE_API_KEY. Crea una API key gratuita en "
+                    "https://dashboard.cohere.com/api-keys y defínela como "
+                    "COHERE_API_KEY en el archivo .env (local) o en las "
+                    "variables de entorno de Render."
                 )
-            self._embeddings = HuggingFaceEndpointEmbeddings(
+            self._embeddings = CohereEmbeddings(
                 model=EMBEDDING_MODEL,
-                task="feature-extraction",
-                huggingfacehub_api_token=hf_token,
+                cohere_api_key=cohere_key,
             )
         return self._embeddings
 

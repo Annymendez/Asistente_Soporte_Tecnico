@@ -145,14 +145,22 @@ revisita explícitamente en la iteración de mejora (ver más abajo).
 
 ### Vectorización (embeddings)
 
-`HuggingFaceEmbeddings` con el modelo
-**`paraphrase-multilingual-MiniLM-L12-v2`**, ejecutado localmente en CPU,
-con normalización de vectores (coseno).
+`CohereEmbeddings` con el modelo **`embed-multilingual-v3.0`** (API de
+Cohere), con normalización de vectores (coseno).
 
-**Justificación:** es un modelo multilingüe (clave porque los manuales y las
-preguntas están en español), liviano (~120 MB, corre en CPU sin GPU), y de
-uso local — ningún fragmento del manual se envía a un servicio externo de
-embeddings, cumpliendo el requisito de control de la base de conocimiento.
+**Justificación:** se evaluaron primero embeddings locales
+(`sentence-transformers`/PyTorch, y luego `fastembed`/ONNX como alternativa
+más liviana), ambos ejecutando el modelo dentro del propio proceso. Se
+descartaron porque el plan gratuito de Render (512 MB de RAM) no alcanza
+para cargar ningún modelo de embeddings en memoria junto con Flask,
+ChromaDB y LangChain — el servicio se reiniciaba por "Ran out of memory".
+Se usa en su lugar la API de Cohere, que es multilingüe (clave porque los
+manuales y las preguntas están en español), gratuita para este volumen de
+uso, y no requiere cargar ningún modelo en el proceso: el servidor solo
+envía el texto por HTTP y recibe el vector, con un costo de memoria mínimo.
+Esto sigue cumpliendo el requisito de control del índice: el corpus
+completo nunca se envía a ningún servicio externo, solo fragmentos sueltos
+para generar su vector, igual que ya pasa con la generación (Groq).
 
 ### Base de datos vectorial
 
@@ -199,7 +207,7 @@ nunca el corpus completo ni se usan los datos para entrenar).
    Chunking (500 / 50, RecursiveCharacterTextSplitter)
           │
           ▼
-   Embeddings locales (MiniLM multilingüe, CPU)
+   Embeddings vía API de Cohere (embed-multilingual-v3.0)
           │
           ▼
    ChromaDB (persistente, metadatos: archivo + página)

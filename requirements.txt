@@ -8,11 +8,12 @@ langchain-text-splitters>=1.1
 langchain-chroma>=1.1
 langchain-groq>=1.1
 
-# Embeddings vía API de Hugging Face (HuggingFaceEndpointEmbeddings), no local:
-# en el plan gratuito de Render (512 MB RAM) tanto sentence-transformers/PyTorch
-# como fastembed/ONNX corriendo en el proceso agotaban la memoria. Este paquete
-# solo hace llamadas HTTP, no carga ningún modelo — requiere HF_TOKEN.
-langchain-huggingface>=1.2
+# Embeddings vía API de Cohere (no local): en el plan gratuito de Render
+# (512 MB RAM), tanto sentence-transformers/PyTorch como fastembed/ONNX
+# corriendo en el proceso agotaban la memoria, y la API gratuita de Hugging
+# Face se quedaba colgada sin responder. Cohere solo hace llamadas HTTP, no
+# carga ningún modelo — requiere COHERE_API_KEY.
+langchain-cohere>=0.6
 
 chromadb>=1.5
 pypdf>=5.9
