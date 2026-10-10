@@ -1,230 +1,275 @@
 """
-app.py — Asistente de Soporte Técnico (RAG + Groq) con interfaz de chat.
+app.py — Interfaz web (Flask) del Asistente de Soporte Técnico (Avance 2).
 
-    python app.py     →     http://127.0.0.1:5000
-    (ábrelo en VS Code con: Ctrl+Shift+P → "Simple Browser: Show")
+Expone:
+  GET  /                -> interfaz de chat
+  GET  /api/status      -> estado de la indexación en segundo plano
+  POST /api/upload      -> subir manuales (PDF/DOCX/TXT/HTML) y reindexar
+  POST /api/sync        -> reindexar los manuales ya presentes en manuales/
+  POST /api/ask         -> hacer una pregunta (usa el historial de la sesión)
+  POST /api/reset_chat  -> borrar el historial de conversación de la sesión
+  POST /api/settings    -> guardar la API key de Groq y parámetros (k, modelo)
+  POST /api/reset       -> borrar el índice vectorial completo
 """
 from __future__ import annotations
 
 import os
-import re
 import threading
-import traceback
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request, session
 
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv()
 
 import rag_core as rag  # noqa: E402  (después de cargar el .env)
 
+BASE_DIR = Path(__file__).resolve().parent
 MANUALES_DIR = BASE_DIR / "manuales"
 MANUALES_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024  # manuales de hasta 300 MB
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "clave-dev-asistente-soporte-tecnico")
 
 engine = rag.RagEngine()
 
-SETTINGS = {
-    "api_key": os.getenv("GROQ_API_KEY", "").strip(),
-    "model": os.getenv("GROQ_MODEL", rag.DEFAULT_GROQ_MODEL),
+# Estado de la indexación en segundo plano, compartido entre hilos.
+LOCK = threading.Lock()
+STATE = {
+    "indexando": False,
+    "progreso": 0.0,
+    "mensaje": "",
+    "error": None,
+    "ultimo_resultado": None,
+}
+
+# Historial de conversación por sesión: {session_id: [{"pregunta":..., "respuesta_cruda":...}, ...]}
+HISTORIALES: dict[str, list[dict]] = {}
+HIST_LOCK = threading.Lock()
+
+CONFIG = {
+    "groq_api_key": os.environ.get("GROQ_API_KEY", ""),
+    "modelo": rag.DEFAULT_GROQ_MODEL,
     "k": 6,
 }
 
-# ── Estado de la tarea en segundo plano (indexar / cargar índice) ────────────
-LOCK = threading.Lock()
-STATE = {"state": "idle", "progress": 0.0, "message": "", "error": None,
-         "result": None, "id": 0, "docs": []}
+
+def _session_id() -> str:
+    if "sid" not in session:
+        session["sid"] = uuid.uuid4().hex
+    return session["sid"]
 
 
-def log(msg: str):
-    try:
-        print(f"[RAG] {msg}", flush=True)
-    except Exception:
-        pass
-
-
-def progress_cb(fraction: float, message: str):
-    with LOCK:
-        STATE["progress"] = float(fraction)
-        STATE["message"] = message
-    log(f"{int(fraction * 100):3d}%  {message}")
-
-
-def run_task(label: str, fn) -> bool:
-    with LOCK:
-        if STATE["state"] == "running":
-            return False
-        STATE.update(state="running", progress=0.0, message=label, error=None,
-                     result=None, id=STATE["id"] + 1)
-
-    def worker():
-        try:
-            res = fn()
-        except Exception as exc:
-            traceback.print_exc()
-            try:
-                docs = engine.indexed_sources()
-            except Exception:
-                docs = None
-            with LOCK:
-                if docs is not None:
-                    STATE["docs"] = docs
-                STATE.update(state="error", error=(str(exc).strip() or type(exc).__name__)[:500])
-        else:
-            with LOCK:
-                if isinstance(res, dict) and "docs" in res:
-                    STATE["docs"] = res["docs"]
-                STATE.update(state="done", progress=1.0, result=res)
-
-    threading.Thread(target=worker, daemon=True).start()
-    return True
-
-
-def stats_dict(s):
-    return {"archivos": s.archivos, "paginas": s.paginas, "fragmentos": s.fragmentos, "avisos": s.avisos}
-
-
-def index_job(paths):
-    stats = engine.index(paths, progress=progress_cb, replace=not engine.ready)
-    return {"kind": "index", "docs": engine.indexed_sources(), "stats": stats_dict(stats)}
-
-
-def clean_name(name: str) -> str:
-    name = os.path.basename((name or "").replace("\\", "/"))
-    name = re.sub(r"[^\w\-. ()]", "_", name).strip(" .")
-    return name or "manual.pdf"
-
-
-def bootstrap():
-    """Al arrancar: abre el índice guardado o, la primera vez, indexa manuales/."""
-    hay_indice = rag.PERSIST_DIR.exists()
-    pdfs = sorted(str(p) for p in MANUALES_DIR.glob("*.pdf"))
-    if not hay_indice and not pdfs:
-        return
-
-    def job():
-        loaded = engine.load_existing() if hay_indice else 0
-        stats = None
-        if not hay_indice:
-            stats = engine.index(pdfs, progress=progress_cb, replace=True)
-        return {"kind": "bootstrap", "loaded": loaded, "docs": engine.indexed_sources(),
-                "stats": stats_dict(stats) if stats else None}
-
-    run_task("Cargando modelo de embeddings…", job)
-
-
-# ── Rutas ────────────────────────────────────────────────────────────────────
-@app.get("/")
-def home():
-    return render_template("index.html")
-
-
-@app.get("/api/status")
-def status():
-    with LOCK:
-        task = {k: STATE[k] for k in ("state", "progress", "message", "error", "result", "id")}
-        docs = list(STATE["docs"])
-    count = engine.count() if (engine.ready and task["state"] != "running") else None
-    return jsonify(ready=engine.ready, count=count, docs=docs, task=task,
-                   has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"])
-
-
-@app.post("/api/upload")
-def upload():
-    if STATE["state"] == "running":
-        return jsonify(error="Estoy ocupado indexando, espera a que termine."), 409
-    guardados, omitidos = [], []
-    for f in request.files.getlist("files"):
-        name = clean_name(f.filename)
-        if not name.lower().endswith(".pdf") or f.stream.read(5) != b"%PDF-":
-            omitidos.append(f"{name}: no parece un PDF")
-            continue
-        f.stream.seek(0)
-        if name in STATE["docs"]:
-            omitidos.append(f"{name}: ya estaba indexado")
-            continue
-        dest = MANUALES_DIR / name
-        f.save(dest)
-        guardados.append(str(dest))
-    if not guardados:
-        return jsonify(error="No recibí ningún PDF nuevo. " + " ".join(omitidos), omitidos=omitidos), 400
-    run_task("Preparando…", lambda: index_job(guardados))
-    return jsonify(started=True, omitidos=omitidos), 202
-
-
-@app.post("/api/sync")
-def sync():
-    """Indexa los PDFs de la carpeta manuales/ que todavía no están en el índice."""
-    if STATE["state"] == "running":
-        return jsonify(error="Estoy ocupado indexando, espera a que termine."), 409
-    nuevos = [str(p) for p in sorted(MANUALES_DIR.glob("*.pdf")) if p.name not in STATE["docs"]]
-    if not nuevos:
-        return jsonify(started=False, message="No hay manuales nuevos en la carpeta manuales/.")
-    run_task("Preparando…", lambda: index_job(nuevos))
-    return jsonify(started=True, archivos=[os.path.basename(p) for p in nuevos]), 202
-
-
-@app.post("/api/ask")
-def ask():
-    data = request.get_json(silent=True) or {}
-    pregunta = (data.get("question") or "").strip()
-    if not pregunta:
-        return jsonify(error="Escribe una pregunta."), 400
-    if STATE["state"] == "running":
-        return jsonify(error="Estoy indexando, dame un momento."), 409
-    if not engine.ready:
-        return jsonify(error="Todavía no tengo manuales. Agrega un PDF primero."), 400
-    if not SETTINGS["api_key"]:
-        return jsonify(error="Falta la API key de Groq.", code="no_key"), 400
-    try:
-        res = engine.ask(pregunta, k=SETTINGS["k"], model=SETTINGS["model"], api_key=SETTINGS["api_key"])
-    except Exception as exc:
-        traceback.print_exc()
-        return jsonify(error=(str(exc).strip() or type(exc).__name__)[:500]), 500
-    return jsonify(
-        respuesta=res.respuesta,
-        error_parseo=res.error_parseo,
-        respuesta_cruda=res.respuesta_cruda,
-        fuentes=res.fuentes(),
-        prompt=res.prompt_texto(),
-        fragmentos=[{"fuente": rag.nombre_fuente(d), "pagina": rag.numero_pagina(d), "texto": d.page_content}
-                    for d in res.fragmentos],
+def _archivos_manuales() -> list[Path]:
+    """Lista todos los archivos con extensión soportada dentro de manuales/."""
+    return sorted(
+        p for p in MANUALES_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in rag.EXTENSIONES_SOPORTADAS
     )
 
 
-@app.post("/api/settings")
-def settings():
-    d = request.get_json(silent=True) or {}
-    if (d.get("api_key") or "").strip():
-        SETTINGS["api_key"] = d["api_key"].strip()
-    if (d.get("model") or "").strip():
-        SETTINGS["model"] = d["model"].strip()
-    try:
-        SETTINGS["k"] = max(1, min(20, int(d.get("k", SETTINGS["k"]))))
-    except (TypeError, ValueError):
-        pass
-    return jsonify(ok=True, has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"])
+def _indexar_en_segundo_plano(paths: list[Path], replace: bool = True):
+    def tarea():
+        with LOCK:
+            STATE["indexando"] = True
+            STATE["error"] = None
+            STATE["progreso"] = 0.0
+            STATE["mensaje"] = "Iniciando…"
+
+        def progreso(frac, msg):
+            with LOCK:
+                STATE["progreso"] = frac
+                STATE["mensaje"] = msg
+
+        try:
+            stats = engine.index(paths, progress=progreso, replace=replace)
+            with LOCK:
+                STATE["ultimo_resultado"] = {
+                    "archivos": stats.archivos,
+                    "fragmentos": stats.fragmentos,
+                    "avisos": stats.avisos,
+                }
+                STATE["mensaje"] = "Indexación completa."
+                STATE["progreso"] = 1.0
+        except Exception as e:
+            with LOCK:
+                STATE["error"] = str(e)
+                STATE["mensaje"] = "Error durante la indexación."
+        finally:
+            with LOCK:
+                STATE["indexando"] = False
+
+    threading.Thread(target=tarea, daemon=True).start()
 
 
-@app.post("/api/reset")
-def reset():
-    if STATE["state"] == "running":
-        return jsonify(error="Estoy ocupado indexando, espera a que termine."), 409
-    try:
-        engine.reset()
-    except Exception as exc:
-        return jsonify(error=str(exc)[:500]), 500
+def bootstrap():
+    """Se ejecuta al importar el módulo (también bajo gunicorn): intenta
+    cargar un índice ya persistido en disco; si no existe, indexa lo que
+    haya en manuales/ automáticamente."""
+    n = engine.load_existing()
+    if n > 0:
+        STATE["mensaje"] = f"Índice existente cargado ({n} fragmentos)."
+        STATE["progreso"] = 1.0
+        return
+
+    archivos = _archivos_manuales()
+    if archivos:
+        _indexar_en_segundo_plano(archivos, replace=True)
+    else:
+        STATE["mensaje"] = "Sin manuales todavía. Sube uno o varios para comenzar."
+
+
+bootstrap()
+
+
+# ── Rutas ────────────────────────────────────────────────────────────────────
+@app.route("/")
+def index():
+    from flask import render_template
+
+    return render_template("index.html")
+
+
+@app.route("/api/status")
+def api_status():
     with LOCK:
-        STATE["docs"] = []
-    return jsonify(ok=True)
+        estado = dict(STATE)
+    estado["listo"] = engine.ready
+    estado["num_fragmentos"] = engine.count()
+    estado["fuentes"] = engine.indexed_sources()
+    return jsonify(estado)
+
+
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    archivos = request.files.getlist("archivos")
+    if not archivos:
+        return jsonify({"error": "No se recibió ningún archivo."}), 400
+
+    guardados = []
+    rechazados = []
+    for f in archivos:
+        if not f.filename:
+            continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in rag.EXTENSIONES_SOPORTADAS:
+            rechazados.append(f.filename)
+            continue
+        destino = MANUALES_DIR / Path(f.filename).name
+        f.save(str(destino))
+        guardados.append(destino.name)
+
+    if not guardados:
+        return jsonify({
+            "error": "Ningún archivo tenía un formato soportado (PDF, DOCX, TXT, HTML).",
+            "rechazados": rechazados,
+        }), 400
+
+    with LOCK:
+        if STATE["indexando"]:
+            return jsonify({"error": "Ya hay una indexación en curso, espera a que termine."}), 409
+
+    _indexar_en_segundo_plano(_archivos_manuales(), replace=True)
+    return jsonify({"guardados": guardados, "rechazados": rechazados, "indexando": True})
+
+
+@app.route("/api/sync", methods=["POST"])
+def api_sync():
+    archivos = _archivos_manuales()
+    if not archivos:
+        return jsonify({"error": "No hay manuales en la carpeta manuales/."}), 400
+    with LOCK:
+        if STATE["indexando"]:
+            return jsonify({"error": "Ya hay una indexación en curso."}), 409
+    _indexar_en_segundo_plano(archivos, replace=True)
+    return jsonify({"indexando": True, "archivos": [a.name for a in archivos]})
+
+
+@app.route("/api/ask", methods=["POST"])
+def api_ask():
+    data = request.get_json(silent=True) or {}
+    pregunta = (data.get("pregunta") or "").strip()
+    if not pregunta:
+        return jsonify({"error": "La pregunta no puede estar vacía."}), 400
+
+    if not engine.ready:
+        return jsonify({"error": "El asistente aún no tiene manuales indexados."}), 400
+
+    sid = _session_id()
+    with HIST_LOCK:
+        historial = list(HISTORIALES.get(sid, []))
+
+    try:
+        resultado = engine.ask(
+            pregunta,
+            historial=historial,
+            k=CONFIG["k"],
+            model=CONFIG["modelo"],
+            api_key=CONFIG["groq_api_key"] or None,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    with HIST_LOCK:
+        HISTORIALES.setdefault(sid, []).append({
+            "pregunta": resultado.pregunta,
+            "respuesta_cruda": resultado.respuesta_cruda,
+        })
+        # limitamos el historial guardado para no crecer indefinidamente
+        HISTORIALES[sid] = HISTORIALES[sid][-rag.MAX_TURNOS_HISTORIAL:]
+
+    return jsonify({
+        "pregunta": resultado.pregunta,
+        "respuesta": resultado.respuesta,
+        "respuesta_cruda": resultado.respuesta_cruda,
+        "error_parseo": resultado.error_parseo,
+        "fuentes": resultado.fuentes(),
+        "prompt_debug": resultado.prompt_texto(),
+        "num_turno": len(HISTORIALES.get(sid, [])),
+    })
+
+
+@app.route("/api/reset_chat", methods=["POST"])
+def api_reset_chat():
+    sid = _session_id()
+    with HIST_LOCK:
+        HISTORIALES[sid] = []
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings():
+    data = request.get_json(silent=True) or {}
+    if "groq_api_key" in data:
+        CONFIG["groq_api_key"] = (data.get("groq_api_key") or "").strip()
+    if "modelo" in data and data["modelo"]:
+        CONFIG["modelo"] = data["modelo"]
+    if "k" in data and data["k"]:
+        try:
+            CONFIG["k"] = max(1, min(20, int(data["k"])))
+        except (TypeError, ValueError):
+            pass
+    return jsonify({"ok": True, "k": CONFIG["k"], "modelo": CONFIG["modelo"]})
+
+
+@app.route("/api/reset", methods=["POST"])
+def api_reset():
+    engine.reset()
+    with HIST_LOCK:
+        HISTORIALES.clear()
+    with LOCK:
+        STATE["ultimo_resultado"] = None
+        STATE["mensaje"] = "Índice borrado."
+        STATE["progreso"] = 0.0
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
-    bootstrap()
-    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False, threaded=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+        use_reloader=False,
+        threaded=True,
+    )

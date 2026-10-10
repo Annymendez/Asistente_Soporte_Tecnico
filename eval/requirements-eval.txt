@@ -1,0 +1,11 @@
+# Dependencias EXTRA solo para correr la evaluación con Ragas
+# (eval/evaluar_ragas.py). No se instalan en Render: la app web desplegada
+# no las necesita, solo el script de evaluación que corre localmente.
+#
+# Instalar con: pip install -r requirements.txt -r eval/requirements-eval.txt
+
+langchain-openai>=1.0
+ragas>=0.4
+datasets>=3.0
+pandas>=2.2
+matplotlib>=3.9

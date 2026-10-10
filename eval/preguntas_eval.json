@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "pregunta": "¿Qué debo hacer para instalar el router RT-900 por primera vez?",
+    "ground_truth": "Conectar el cable de alimentación y esperar a que el LED de encendido quede en verde fijo, luego conectar el cable WAN del proveedor de internet al puerto azul marcado como WAN.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 2,
+    "pregunta": "El LED de mi router parpadea en color ámbar, ¿qué significa y qué debo hacer?",
+    "ground_truth": "Significa que el router está buscando señal de internet. Se debe reiniciar el módem y el router desconectándolos de la corriente durante 30 segundos.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 3,
+    "pregunta": "¿Qué indica que el LED del router esté en rojo fijo?",
+    "ground_truth": "Indica un error de hardware y se debe contactar a soporte técnico.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 4,
+    "pregunta": "¿Qué significa que el LED del router esté completamente apagado?",
+    "ground_truth": "Que el equipo no tiene alimentación eléctrica.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 5,
+    "pregunta": "¿Cómo entro a la configuración del router para cambiar el WiFi?",
+    "ground_truth": "Ingresando a 192.168.1.1 desde el navegador con usuario 'admin' y la contraseña impresa en la etiqueta inferior del equipo, luego en la sección 'Wireless'.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 6,
+    "pregunta": "¿Qué tipo de seguridad WiFi se recomienda usar en el router?",
+    "ground_truth": "Se recomienda usar WPA3 si el equipo lo soporta, o WPA2 en su defecto.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 7,
+    "pregunta": "El internet se desconecta de forma intermitente, ¿qué pasos de solución recomienda el manual?",
+    "ground_truth": "Verificar que el cable WAN esté bien conectado y no dañado, actualizar el firmware desde 'Administración > Actualización', y si persiste, restablecer a valores de fábrica manteniendo presionado RESET durante 10 segundos.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 8,
+    "pregunta": "¿Qué debo hacer si el router huele a quemado o sale humo?",
+    "ground_truth": "Desconectarlo de la corriente inmediatamente, no volver a usarlo, y contactar a soporte técnico certificado; no abrir la carcasa uno mismo.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 9,
+    "pregunta": "¿Puedo abrir la carcasa del router yo mismo si tiene una falla?",
+    "ground_truth": "No, abrir la carcasa anula la garantía y puede causar descargas eléctricas.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 10,
+    "pregunta": "¿Cómo puedo bloquear el acceso a internet de un dispositivo específico en ciertos horarios?",
+    "ground_truth": "Desde la sección 'Controles parentales', seleccionando el dispositivo por su dirección MAC y definiendo el horario de bloqueo.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 11,
+    "pregunta": "¿Cuánto dura la garantía del router RT-900 y qué la invalida?",
+    "ground_truth": "12 meses desde la fecha de compra; no cubre daños por descargas eléctricas externas, manipulación no autorizada de la carcasa, ni daños por líquidos.",
+    "en_corpus": true,
+    "fuente_esperada": "politica_garantia_rt900.txt"
+  },
+  {
+    "id": 12,
+    "pregunta": "¿Qué necesito conservar para reclamar la garantía del router?",
+    "ground_truth": "La factura de compra, y contactar al centro de servicio autorizado más cercano.",
+    "en_corpus": true,
+    "fuente_esperada": "politica_garantia_rt900.txt"
+  },
+  {
+    "id": 13,
+    "pregunta": "Olvidé la contraseña del WiFi, ¿cómo la restablezco?",
+    "ground_truth": "Mantener presionado el botón RESET durante 10 segundos con el equipo encendido; esto borra la configuración y regresa a los valores de fábrica, incluyendo el SSID y contraseña original de la etiqueta.",
+    "en_corpus": true,
+    "fuente_esperada": "guia_rapida_rt900.html"
+  },
+  {
+    "id": 14,
+    "pregunta": "¿Cómo cambio el canal WiFi si hay interferencia con redes vecinas?",
+    "ground_truth": "Ingresando a 192.168.1.1, en la sección 'Wireless > Avanzado', y seleccionando un canal distinto manualmente.",
+    "en_corpus": true,
+    "fuente_esperada": "guia_rapida_rt900.html"
+  },
+  {
+    "id": 15,
+    "pregunta": "¿Cuál es la IP para administrar el router y cuál es el usuario por defecto?",
+    "ground_truth": "192.168.1.1, usuario 'admin' con la contraseña impresa en la etiqueta inferior del equipo.",
+    "en_corpus": true,
+    "fuente_esperada": "manual_router_rt900.pdf"
+  },
+  {
+    "id": 16,
+    "pregunta": "¿Cómo configuro una VPN en el router RT-900?",
+    "ground_truth": "El manual no contiene información sobre configuración de VPN para este equipo.",
+    "en_corpus": false,
+    "fuente_esperada": "No disponible en el contexto entregado"
+  },
+  {
+    "id": 17,
+    "pregunta": "¿Cuál es el consumo eléctrico en vatios del router en modo de espera?",
+    "ground_truth": "El manual no contiene información sobre el consumo eléctrico del equipo.",
+    "en_corpus": false,
+    "fuente_esperada": "No disponible en el contexto entregado"
+  },
+  {
+    "id": 18,
+    "pregunta": "¿El router RT-900 es compatible con el estándar WiFi 7?",
+    "ground_truth": "El manual no especifica el estándar WiFi soportado por el equipo.",
+    "en_corpus": false,
+    "fuente_esperada": "No disponible en el contexto entregado"
+  },
+  {
+    "id": 19,
+    "pregunta": "¿Cómo actualizo el firmware de mi lavadora inteligente desde la app del router?",
+    "ground_truth": "El manual del router RT-900 no contiene información sobre lavadoras ni integración con electrodomésticos.",
+    "en_corpus": false,
+    "fuente_esperada": "No disponible en el contexto entregado"
+  },
+  {
+    "id": 20,
+    "pregunta": "¿Qué garantía internacional aplica si compré el router en otro país?",
+    "ground_truth": "El documento de garantía no menciona condiciones de garantía internacional ni compras en otros países.",
+    "en_corpus": false,
+    "fuente_esperada": "No disponible en el contexto entregado"
+  }
+]
