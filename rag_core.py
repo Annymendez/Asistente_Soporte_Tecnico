@@ -261,6 +261,7 @@ class RagEngine:
         return self._embeddings
 
     def _open_store(self):
+        from chromadb.config import Settings
         from langchain_chroma import Chroma
 
         return Chroma(
@@ -268,6 +269,13 @@ class RagEngine:
             embedding_function=self._get_embeddings(),
             persist_directory=str(self.persist_dir),
             collection_metadata={"hnsw:space": "cosine"},
+            # ChromaDB intenta mandar telemetría anónima a un servidor externo
+            # cada vez que se abre el cliente. En el entorno de red restringido
+            # de Render esa llamada se queda colgada en vez de fallar rápido,
+            # lo que bloqueaba el arranque del servidor entero (no una llamada
+            # en segundo plano, sino el hilo principal) hasta que Gunicorn lo
+            # mataba por "WORKER TIMEOUT" tras 120s. Se desactiva explícitamente.
+            client_settings=Settings(anonymized_telemetry=False),
         )
 
     def _get_llm(self, model: str, api_key: Optional[str], temperature: float):
