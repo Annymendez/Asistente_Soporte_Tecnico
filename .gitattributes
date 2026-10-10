@@ -1,0 +1,5 @@
+# Los archivos de la base de datos vectorial de ChromaDB (SQLite + binarios)
+# NO deben pasar por la conversión automática de saltos de línea de Git
+# (autocrlf), porque eso puede corromperlos silenciosamente al subirlos
+# desde Windows. Se marcan explícitamente como binarios.
+chroma/** -text -diff
