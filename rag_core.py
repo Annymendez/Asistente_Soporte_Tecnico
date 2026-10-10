@@ -291,7 +291,20 @@ class RagEngine:
         if self._llm_cache_key != cache_key:
             from langchain_groq import ChatGroq
 
-            self._llm = ChatGroq(model=model, temperature=temperature, api_key=key)
+            self._llm = ChatGroq(
+                model=model,
+                temperature=temperature,
+                api_key=key,
+                # Igual que con Cohere: sin esto, si la red de Render se cuelga
+                # al llamar a la API de Groq (sin responder, sin dar error), la
+                # petición /api/ask se queda esperando PARA SIEMPRE en el hilo
+                # principal, hasta que Gunicorn mata el worker por "WORKER
+                # TIMEOUT" — exactamente lo que pasaba al hacer una pregunta en
+                # el chat. Con esto, falla rápido con un error claro en vez de
+                # colgar el servidor entero.
+                timeout=30,
+                max_retries=2,
+            )
             self._llm_cache_key = cache_key
         return self._llm
 
