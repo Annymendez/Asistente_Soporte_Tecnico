@@ -14,9 +14,11 @@ el Avance 1 quede intacto como evidencia entregada.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -44,6 +46,33 @@ CAMPOS_JSON = ("diagnostico", "pasos_solucion", "nivel_urgencia", "fuente", "req
 # Máximo de turnos previos (pregunta+respuesta) que se inyectan como historial real
 # en los mensajes enviados al LLM. Se limita para no exceder el contexto del modelo.
 MAX_TURNOS_HISTORIAL = 6
+
+# ── Vigilante (watchdog) para llamadas externas ────────────────────────────
+# Los timeouts internos de los clientes de Cohere/Groq (request_timeout,
+# timeout) deberían bastar, pero en la práctica hemos visto que el worker se
+# cuelga durante EXACTAMENTE el --timeout de gunicorn sin importar el valor
+# configurado — es decir, el timeout interno de esas librerías no se está
+# respetando de verdad en la red de salida de Render. Este vigilante corre la
+# llamada en un hilo aparte y, si no vuelve en 'segundos', abandona la espera
+# y lanza un TimeoutError de inmediato, para que Flask pueda devolver un
+# error claro en vez de que gunicorn mate el worker entero.
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="watchdog")
+
+
+def _con_vigilante(etiqueta: str, segundos: float, func, *args, **kwargs):
+    t0 = time.time()
+    print(f"[ASK] -> iniciando '{etiqueta}' (límite {segundos}s)…", flush=True)
+    future = _EXECUTOR.submit(func, *args, **kwargs)
+    try:
+        resultado = future.result(timeout=segundos)
+    except concurrent.futures.TimeoutError:
+        print(f"[ASK] <- '{etiqueta}' NO respondió en {segundos}s (siguió colgado en segundo plano).", flush=True)
+        raise TimeoutError(
+            f"'{etiqueta}' no respondió en {segundos}s. Es probable que sea un "
+            f"problema de red saliente de Render hacia ese servicio, no de tu código."
+        )
+    print(f"[ASK] <- '{etiqueta}' OK en {time.time() - t0:.1f}s", flush=True)
+    return resultado
 
 
 # ── Utilidades ──────────────────────────────────────────────────────────────
@@ -414,10 +443,12 @@ class RagEngine:
             peligroso?") que dependen de turnos anteriores — requisito de
             'interfaz conversacional real' del Avance 2.
         """
+        print(f"[ASK] ask() llamado. Pregunta: {pregunta!r}", flush=True)
         if not self.ready:
             raise RuntimeError("Primero indexa los manuales (o carga un índice existente).")
 
         llm = self._get_llm(model, api_key, temperature)
+        print("[ASK] LLM (Groq) obtenido/cacheado.", flush=True)
 
         # Retrieval: se busca solo con la pregunta del turno actual (la query de
         # búsqueda no incluye el historial para no diluir la similitud semántica
@@ -425,7 +456,7 @@ class RagEngine:
         retriever = self._vector_store.as_retriever(
             search_type="similarity", search_kwargs={"k": k}
         )
-        docs = retriever.invoke(pregunta)
+        docs = _con_vigilante("Cohere: embeber pregunta y buscar", 30, retriever.invoke, pregunta)
 
         # Los fragmentos que se pasan a construir_mensajes_para_llm (Avance 1):
         # llevan la fuente y página al frente de cada uno para que el propio
@@ -437,9 +468,13 @@ class RagEngine:
         mensajes_base = construir_mensajes_para_llm(fragmentos_contexto, pregunta)
         mensajes = _mensajes_con_historial(mensajes_base, historial)
 
-        respuesta_cruda = llm.invoke(_a_mensajes_langchain(mensajes)).content
+        mensajes_lc = _a_mensajes_langchain(mensajes)
+        respuesta_cruda = _con_vigilante(
+            "Groq: generar respuesta", 35, lambda: llm.invoke(mensajes_lc).content
+        )
         if not isinstance(respuesta_cruda, str):
             respuesta_cruda = str(respuesta_cruda)
+        print("[ASK] ask() terminado, devolviendo resultado.", flush=True)
 
         respuesta, error = parsear_json_respuesta(respuesta_cruda)
 
