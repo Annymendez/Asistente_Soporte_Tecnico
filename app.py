@@ -13,17 +13,29 @@ Expone:
 """
 from __future__ import annotations
 
+print("[BOOT] app.py: inicio del archivo (antes de cualquier import pesado).", flush=True)
+
 import os
 import threading
 import uuid
 from pathlib import Path
 
+print("[BOOT] imports básicos (os, threading, uuid, pathlib) OK.", flush=True)
+
 from dotenv import load_dotenv
+
+print("[BOOT] import dotenv OK.", flush=True)
+
 from flask import Flask, jsonify, request, session
 
+print("[BOOT] import flask OK.", flush=True)
+
 load_dotenv()
+print("[BOOT] load_dotenv() OK.", flush=True)
 
 import rag_core as rag  # noqa: E402  (después de cargar el .env)
+
+print("[BOOT] import rag_core OK.", flush=True)
 
 BASE_DIR = Path(__file__).resolve().parent
 MANUALES_DIR = BASE_DIR / "manuales"
@@ -32,7 +44,11 @@ MANUALES_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "clave-dev-asistente-soporte-tecnico")
 
+print("[BOOT] Flask app creada. Creando RagEngine...", flush=True)
+
 engine = rag.RagEngine()
+
+print("[BOOT] RagEngine creado. Llamando a bootstrap()...", flush=True)
 
 # Estado de la indexación en segundo plano, compartido entre hilos.
 LOCK = threading.Lock()
@@ -129,6 +145,8 @@ def bootstrap():
 
 
 bootstrap()
+
+print("[BOOT] bootstrap() terminó. La app ya debería poder recibir pedidos.", flush=True)
 
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
