@@ -257,6 +257,14 @@
       st.indexing = true;
     } else {
       if (t.id > st.handled) finishTask(t);
+      else if (st.bubble) {
+        // La barra estaba activa pero el servidor ya no tiene tarea: se reinició a mitad
+        // del indexado (en Render gratis suele ser por falta de memoria).
+        const b = st.bubble.bubble;
+        b.classList.add("plain", "error");
+        b.textContent = "Se interrumpió el indexado porque el servidor se reinició. Intenta subir el PDF otra vez (si es muy grande, prueba con uno más pequeño).";
+        st.bubble = null; st.handled = t.id;
+      }
       st.indexing = false;
     }
     refreshUI();

@@ -225,6 +225,9 @@ def reset():
     return jsonify(ok=True)
 
 
+# Se llama aquí (no solo en __main__) para que también corra en Render con gunicorn:
+# así los PDFs que dejes en manuales/ del repo se indexan solos al arrancar.
+bootstrap()
+
 if __name__ == "__main__":
-    bootstrap()
     app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False, threaded=True)

@@ -4,5 +4,4 @@ __pycache__/
 *.pyc
 .env
 chroma/
-manuales/*.pdf
-!manuales/.gitkeep
+ 

@@ -29,7 +29,10 @@ from asistente_soporte_tecnico import construir_mensajes_para_llm
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_DIR = BASE_DIR / "chroma"
 COLLECTION_NAME = "manuales_soporte"
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+# Modelo pequeño (ONNX, ~90 MB, sin PyTorch) para que quepa en los 512 MB de
+# RAM del plan gratuito de Render. El multilingüe anterior (~470 MB + PyTorch)
+# hacía que Render matara el proceso a mitad del indexado.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -158,12 +161,12 @@ class RagEngine:
     # -- piezas del pipeline ---------------------------------------------------
     def _get_embeddings(self):
         if self._embeddings is None:
-            from langchain_huggingface import HuggingFaceEmbeddings
+            from langchain_community.embeddings import FastEmbedEmbeddings
 
-            self._embeddings = HuggingFaceEmbeddings(
+            self._embeddings = FastEmbedEmbeddings(
                 model_name=EMBEDDING_MODEL,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True},
+                batch_size=16,   # lotes pequeños = menos RAM al mismo tiempo
+                threads=1,
             )
         return self._embeddings
 
@@ -249,7 +252,7 @@ class RagEngine:
             if c.page_content.strip()
         ]
 
-        progress(0.2, "Cargando modelo de embeddings (la primera vez descarga ~120 MB)…")
+        progress(0.2, "Cargando modelo de embeddings (la primera vez descarga ~90 MB)…")
         self._get_embeddings()
         if replace:
             self._vector_store = None
