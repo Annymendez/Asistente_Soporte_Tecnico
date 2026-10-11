@@ -256,7 +256,7 @@ class RagEngine:
                 # hay respuesta en 25s falla con un error CLARO en los logs en
                 # vez de quedarse pegado para siempre en "Iniciando...".
                 request_timeout=25,
-                max_retries=2,
+                max_retries=0,
             )
         return self._embeddings
 
@@ -303,7 +303,7 @@ class RagEngine:
                 # el chat. Con esto, falla rápido con un error claro en vez de
                 # colgar el servidor entero.
                 timeout=30,
-                max_retries=2,
+                max_retries=0,
             )
             self._llm_cache_key = cache_key
         return self._llm
