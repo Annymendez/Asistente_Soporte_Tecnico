@@ -102,7 +102,7 @@ def construir_dataset_ragas(filas: list[dict]):
 
 def ejecutar_evaluacion_ragas(dataset, model: str):
     from langchain_groq import ChatGroq
-    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_community.embeddings import FastEmbedEmbeddings
     from ragas import evaluate
     from ragas.embeddings import LangchainEmbeddingsWrapper
     from ragas.llms import LangchainLLMWrapper
@@ -115,11 +115,8 @@ def ejecutar_evaluacion_ragas(dataset, model: str):
 
     llm_juez = LangchainLLMWrapper(ChatGroq(model=model, temperature=0.0))
     embeddings_juez = LangchainEmbeddingsWrapper(
-        HuggingFaceEmbeddings(
-            model_name=rag.EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
+        # Mismo motor de embeddings que usa la app (fastembed, sin PyTorch)
+        FastEmbedEmbeddings(model_name=rag.EMBEDDING_MODEL)
     )
 
     metricas = [

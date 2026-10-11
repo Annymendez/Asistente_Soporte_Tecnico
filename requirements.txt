@@ -1,22 +1,16 @@
-flask>=3.1
-python-dotenv>=1.2
-gunicorn>=23.0
+flask
+python-dotenv
+gunicorn
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-chroma
+langchain-groq
+fastembed
+chromadb
+pypdf
+docx2txt
+beautifulsoup4
+lxml
 
-langchain-core>=1.6
-langchain-community>=0.4
-langchain-text-splitters>=1.1
-langchain-chroma>=1.1
-langchain-groq>=1.1
-
-# Embeddings vía API de Cohere (no local): en el plan gratuito de Render
-# (512 MB RAM), tanto sentence-transformers/PyTorch como fastembed/ONNX
-# corriendo en el proceso agotaban la memoria, y la API gratuita de Hugging
-# Face se quedaba colgada sin responder. Cohere solo hace llamadas HTTP, no
-# carga ningún modelo — requiere COHERE_API_KEY.
-langchain-cohere>=0.6
-
-chromadb>=1.5
-pypdf>=5.9
-docx2txt>=0.9
-beautifulsoup4>=4.15
-lxml>=6.1
+ 

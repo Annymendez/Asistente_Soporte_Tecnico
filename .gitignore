@@ -3,20 +3,5 @@ env/
 __pycache__/
 *.pyc
 .env
-
-# Los manuales de prueba SÍ se versionan (manuales/*): son el corpus sintético
-# del "router de prueba" que se eligió usar para el Avance 2, y Render tiene
-# disco efímero, así que bootstrap() necesita encontrarlos en cada despliegue.
-#
-# chroma/ (el índice vectorial YA CALCULADO) también se versiona a propósito,
-# a diferencia de antes: la API gratuita de Cohere respondía de forma muy
-# inconsistente en Render al indexar varios fragmentos de golpe en el arranque
-# (a veces tardaba segundos, a veces se quedaba colgada muchos minutos sin
-# responder ni dar error, dejando el servicio atascado en "Iniciando..."). En
-# vez de depender de esa llamada en cada arranque del servidor, el índice se
-# calcula UNA SOLA VEZ en local (con `python app.py`, que sí tiene una red
-# estable) y se sube ya calculado al repositorio. Así Render solo lo CARGA
-# desde disco al arrancar (instantáneo, sin red), y Cohere solo se vuelve a
-# llamar para la pregunta puntual del usuario (una sola llamada chiquita),
-# no para indexar. Cada vez que cambien los manuales hay que reindexar en
-# local y volver a subir la carpeta chroma/ actualizada.
+chroma/
+eval/chroma_eval/

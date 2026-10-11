@@ -5,20 +5,19 @@ Conecta el diseño de prompts del Avance 1 (asistente_soporte_tecnico.py:
 SYSTEM_PROMPT, FEW_SHOT_EXAMPLES, construir_mensajes_para_llm) con un
 pipeline RAG real y conversacional:
 
-    Manuales (PDF/DOCX/TXT/HTML) -> fragmentos -> embeddings locales -> ChromaDB
-                 -> búsqueda -> mensajes (system + few-shot + historial + <contexto>/<pregunta>)
-                 -> LLM (Groq) -> respuesta JSON estructurada
+    Manuales (PDF/DOCX/TXT/HTML) -> fragmentos -> embeddings locales (fastembed)
+        -> ChromaDB -> búsqueda
+        -> mensajes (system + few-shot + historial + <contexto>/<pregunta>)
+        -> LLM (Groq) -> respuesta JSON estructurada
 
 No se modifica asistente_soporte_tecnico.py: se importa tal cual para que
 el Avance 1 quede intacto como evidencia entregada.
 """
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import os
 import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -31,7 +30,11 @@ from asistente_soporte_tecnico import construir_mensajes_para_llm
 BASE_DIR = Path(__file__).resolve().parent
 PERSIST_DIR = BASE_DIR / "chroma"
 COLLECTION_NAME = "manuales_soporte"
-EMBEDDING_MODEL = "embed-multilingual-v3.0"  # modelo de embeddings de Cohere
+# Modelo pequeño (ONNX, ~90 MB, sin PyTorch) para que quepa en los 512 MB de
+# RAM del plan gratuito de Render. El multilingüe anterior (~470 MB + PyTorch)
+# hacía que Render matara el proceso a mitad del indexado. Al correr en el
+# propio proceso no depende de ninguna API externa ni de otra API key.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -39,40 +42,13 @@ CHUNK_OVERLAP = 50
 # Extensiones de archivo soportadas para la ingesta (Avance 2: PDF, DOCX, TXT, HTML)
 EXTENSIONES_SOPORTADAS = (".pdf", ".docx", ".txt", ".html", ".htm")
 
-ProgressCallback = Callable[[float, str], None]
-
-CAMPOS_JSON = ("diagnostico", "pasos_solucion", "nivel_urgencia", "fuente", "requiere_soporte_humano")
-
 # Máximo de turnos previos (pregunta+respuesta) que se inyectan como historial real
 # en los mensajes enviados al LLM. Se limita para no exceder el contexto del modelo.
 MAX_TURNOS_HISTORIAL = 6
 
-# ── Vigilante (watchdog) para llamadas externas ────────────────────────────
-# Los timeouts internos de los clientes de Cohere/Groq (request_timeout,
-# timeout) deberían bastar, pero en la práctica hemos visto que el worker se
-# cuelga durante EXACTAMENTE el --timeout de gunicorn sin importar el valor
-# configurado — es decir, el timeout interno de esas librerías no se está
-# respetando de verdad en la red de salida de Render. Este vigilante corre la
-# llamada en un hilo aparte y, si no vuelve en 'segundos', abandona la espera
-# y lanza un TimeoutError de inmediato, para que Flask pueda devolver un
-# error claro en vez de que gunicorn mate el worker entero.
-_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="watchdog")
+ProgressCallback = Callable[[float, str], None]
 
-
-def _con_vigilante(etiqueta: str, segundos: float, func, *args, **kwargs):
-    t0 = time.time()
-    print(f"[ASK] -> iniciando '{etiqueta}' (límite {segundos}s)…", flush=True)
-    future = _EXECUTOR.submit(func, *args, **kwargs)
-    try:
-        resultado = future.result(timeout=segundos)
-    except concurrent.futures.TimeoutError:
-        print(f"[ASK] <- '{etiqueta}' NO respondió en {segundos}s (siguió colgado en segundo plano).", flush=True)
-        raise TimeoutError(
-            f"'{etiqueta}' no respondió en {segundos}s. Es probable que sea un "
-            f"problema de red saliente de Render hacia ese servicio, no de tu código."
-        )
-    print(f"[ASK] <- '{etiqueta}' OK en {time.time() - t0:.1f}s", flush=True)
-    return resultado
+CAMPOS_JSON = ("diagnostico", "pasos_solucion", "nivel_urgencia", "fuente", "requiere_soporte_humano")
 
 
 # ── Utilidades ──────────────────────────────────────────────────────────────
@@ -114,7 +90,7 @@ def _cargar_documento(path: Path | str):
     if ext == ".txt":
         from langchain_community.document_loaders import TextLoader
 
-        return TextLoader(str(ruta), encoding="utf-8").load()
+        return TextLoader(str(ruta), encoding="utf-8", autodetect_encoding=True).load()
 
     if ext in (".html", ".htm"):
         from langchain_community.document_loaders import BSHTMLLoader
@@ -142,7 +118,7 @@ def _mensajes_con_historial(mensajes: list[dict], historial: list[dict] | None) 
 
     mensajes: salida de construir_mensajes_para_llm — [system, few-shot..., turno_real]
     historial: lista de dicts {"pregunta": str, "respuesta_cruda": str}, en orden
-               cronológico, ya limitada a MAX_TURNOS_HISTORIAL turnos.
+               cronológico.
     """
     if not historial:
         return mensajes
@@ -188,7 +164,7 @@ class IndexStats:
 class RagResult:
     pregunta: str
     fragmentos: list
-    mensajes: list          # mensajes system + few-shot + historial + turno real, tal como se enviaron al LLM
+    mensajes: list          # system + few-shot + historial + turno real, tal como se enviaron al LLM
     respuesta_cruda: str     # texto tal cual lo devolvió el modelo
     respuesta: dict | None   # JSON ya parseado (diagnostico, pasos_solucion, ...) o None si falló el parseo
     error_parseo: str | None = None
@@ -202,7 +178,7 @@ class RagResult:
             return (0, int(p)) if p.isdigit() else (1, 0)
 
         return " · ".join(
-            f"{nombre} (pág. {', '.join(sorted(pags, key=orden))})"
+            f"{nombre} (pág. {', '.join(sorted((p for p in pags if p != '-'), key=orden))})"
             if any(p != "-" for p in pags)
             else nombre
             for nombre, pags in por_archivo.items()
@@ -253,39 +229,12 @@ class RagEngine:
     # -- piezas del pipeline ---------------------------------------------------
     def _get_embeddings(self):
         if self._embeddings is None:
-            # El plan gratuito de Render solo da 512 MB de RAM, y CUALQUIER
-            # modelo de embeddings cargado EN EL PROCESO (sentence-transformers
-            # con PyTorch, o fastembed con ONNX runtime) se queda corto sumado
-            # a Flask + ChromaDB + LangChain — ambos tumbaron el servicio con
-            # "Ran out of memory". Se probó luego la API de inferencia gratuita
-            # de Hugging Face, pero quedó colgada indefinidamente sin responder
-            # (ese nivel gratuito ha ido retirando soporte para varios modelos
-            # de embeddings). Se usa en su lugar la API de **Cohere**: tiene un
-            # nivel gratuito confiable pensado específicamente para RAG, con un
-            # modelo de embeddings multilingüe. El proceso de Render no carga
-            # ningún modelo, solo hace una llamada HTTP por cada tanda de
-            # fragmentos. Requiere una API key gratuita de Cohere en la
-            # variable de entorno COHERE_API_KEY (dashboard.cohere.com).
-            from langchain_cohere import CohereEmbeddings
+            from langchain_community.embeddings import FastEmbedEmbeddings
 
-            cohere_key = os.getenv("COHERE_API_KEY")
-            if not cohere_key:
-                raise ValueError(
-                    "Falta COHERE_API_KEY. Crea una API key gratuita en "
-                    "https://dashboard.cohere.com/api-keys y defínela como "
-                    "COHERE_API_KEY en el archivo .env (local) o en las "
-                    "variables de entorno de Render."
-                )
-            self._embeddings = CohereEmbeddings(
-                model=EMBEDDING_MODEL,
-                cohere_api_key=cohere_key,
-                # Sin esto, si la red saliente de Render se queda "colgada" al
-                # intentar llegar a la API de Cohere (sin responder, sin dar
-                # error), el cliente esperaría indefinidamente. Con esto, si no
-                # hay respuesta en 25s falla con un error CLARO en los logs en
-                # vez de quedarse pegado para siempre en "Iniciando...".
-                request_timeout=25,
-                max_retries=0,
+            self._embeddings = FastEmbedEmbeddings(
+                model_name=EMBEDDING_MODEL,
+                batch_size=16,   # lotes pequeños = menos RAM al mismo tiempo
+                threads=1,
             )
         return self._embeddings
 
@@ -298,12 +247,9 @@ class RagEngine:
             embedding_function=self._get_embeddings(),
             persist_directory=str(self.persist_dir),
             collection_metadata={"hnsw:space": "cosine"},
-            # ChromaDB intenta mandar telemetría anónima a un servidor externo
-            # cada vez que se abre el cliente. En el entorno de red restringido
-            # de Render esa llamada se queda colgada en vez de fallar rápido,
-            # lo que bloqueaba el arranque del servidor entero (no una llamada
-            # en segundo plano, sino el hilo principal) hasta que Gunicorn lo
-            # mataba por "WORKER TIMEOUT" tras 120s. Se desactiva explícitamente.
+            # ChromaDB intenta mandar telemetría anónima a un servidor externo al
+            # abrir el cliente; en la red de Render esa llamada puede quedarse
+            # colgada y bloquear el arranque. Se desactiva explícitamente.
             client_settings=Settings(anonymized_telemetry=False),
         )
 
@@ -324,37 +270,18 @@ class RagEngine:
                 model=model,
                 temperature=temperature,
                 api_key=key,
-                # Igual que con Cohere: sin esto, si la red de Render se cuelga
-                # al llamar a la API de Groq (sin responder, sin dar error), la
-                # petición /api/ask se queda esperando PARA SIEMPRE en el hilo
-                # principal, hasta que Gunicorn mata el worker por "WORKER
-                # TIMEOUT" — exactamente lo que pasaba al hacer una pregunta en
-                # el chat. Con esto, falla rápido con un error claro en vez de
-                # colgar el servidor entero.
-                timeout=30,
-                max_retries=0,
+                timeout=60,       # si Groq no responde, falla con error claro
+                max_retries=1,    # en vez de colgar la petición indefinidamente
             )
             self._llm_cache_key = cache_key
         return self._llm
 
     # -- reanudar: cargar base vectorial existente -----------------------------
     def load_existing(self) -> int:
-        print(f"[CARGA] Buscando índice existente en: {self.persist_dir.resolve()}", flush=True)
         if not self.persist_dir.exists():
-            print("[CARGA] La carpeta NO existe. No hay índice pre-armado para cargar.", flush=True)
             return 0
-        contenido = list(self.persist_dir.rglob("*"))
-        print(f"[CARGA] La carpeta SÍ existe. Contiene {len(contenido)} elementos: "
-              f"{[str(p.relative_to(self.persist_dir)) for p in contenido]}", flush=True)
-        try:
-            store = self._open_store()
-            n = store._collection.count()
-        except Exception as e:
-            import traceback
-            print(f"[CARGA] ERROR al abrir el índice: {type(e).__name__}: {e}", flush=True)
-            traceback.print_exc()
-            return 0
-        print(f"[CARGA] Índice abierto. Fragmentos encontrados: {n}", flush=True)
+        store = self._open_store()
+        n = store._collection.count()
         self._vector_store = store if n > 0 else None
         return n
 
@@ -403,7 +330,7 @@ class RagEngine:
             if c.page_content.strip()
         ]
 
-        progress(0.2, "Cargando modelo de embeddings (la primera vez descarga ~120 MB)…")
+        progress(0.2, "Cargando modelo de embeddings (la primera vez descarga ~90 MB)…")
         self._get_embeddings()
         if replace:
             self._vector_store = None
@@ -437,29 +364,24 @@ class RagEngine:
     ) -> RagResult:
         """
         pregunta: la pregunta real del usuario en este turno.
-        historial: lista de turnos previos de la MISMA conversación, en orden
-            cronológico, cada uno como {"pregunta": str, "respuesta_cruda": str}.
-            Permite preguntas de seguimiento ("¿y si no funciona?", "¿y eso es
-            peligroso?") que dependen de turnos anteriores — requisito de
-            'interfaz conversacional real' del Avance 2.
+        historial: turnos previos de la MISMA conversación, en orden cronológico,
+            cada uno como {"pregunta": str, "respuesta_cruda": str}. Permite
+            preguntas de seguimiento ("¿y si no funciona?") que dependen de
+            turnos anteriores.
         """
-        print(f"[ASK] ask() llamado. Pregunta: {pregunta!r}", flush=True)
         if not self.ready:
             raise RuntimeError("Primero indexa los manuales (o carga un índice existente).")
 
         llm = self._get_llm(model, api_key, temperature)
-        print("[ASK] LLM (Groq) obtenido/cacheado.", flush=True)
 
-        # Retrieval: se busca solo con la pregunta del turno actual (la query de
-        # búsqueda no incluye el historial para no diluir la similitud semántica
-        # con texto de turnos anteriores que puede no ser relevante al nuevo tema).
+        # Retrieval: se busca solo con la pregunta del turno actual, para no
+        # diluir la similitud semántica con texto de turnos anteriores.
         retriever = self._vector_store.as_retriever(
             search_type="similarity", search_kwargs={"k": k}
         )
-        docs = _con_vigilante("Cohere: embeber pregunta y buscar", 30, retriever.invoke, pregunta)
+        docs = retriever.invoke(pregunta)
 
-        # Los fragmentos que se pasan a construir_mensajes_para_llm (Avance 1):
-        # llevan la fuente y página al frente de cada uno para que el propio
+        # Cada fragmento lleva la fuente y página al frente para que el propio
         # modelo pueda citarlas en el campo "fuente" del JSON de salida.
         fragmentos_contexto = [
             f"[Fuente: {nombre_fuente(d)} — Pág. {numero_pagina(d)}]\n{d.page_content}" for d in docs
@@ -468,13 +390,9 @@ class RagEngine:
         mensajes_base = construir_mensajes_para_llm(fragmentos_contexto, pregunta)
         mensajes = _mensajes_con_historial(mensajes_base, historial)
 
-        mensajes_lc = _a_mensajes_langchain(mensajes)
-        respuesta_cruda = _con_vigilante(
-            "Groq: generar respuesta", 35, lambda: llm.invoke(mensajes_lc).content
-        )
+        respuesta_cruda = llm.invoke(_a_mensajes_langchain(mensajes)).content
         if not isinstance(respuesta_cruda, str):
             respuesta_cruda = str(respuesta_cruda)
-        print("[ASK] ask() terminado, devolviendo resultado.", flush=True)
 
         respuesta, error = parsear_json_respuesta(respuesta_cruda)
 
