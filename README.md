@@ -94,11 +94,12 @@ comillas, porque:
 ### Selección de documentos (corpus)
 
 Para este avance se usa un **manual sintético de prueba**: el router
-doméstico ficticio **RT-900**, en tres archivos dentro de `manuales/`:
+doméstico ficticio **RT-900**, en cuatro archivos dentro de `manuales/`:
 
 | Archivo | Formato | Contenido |
 |---|---|---|
 | `manual_router_rt900.pdf` | PDF | Instalación, significado de LEDs, configuración de WiFi, problemas comunes, advertencia de seguridad, controles parentales |
+| `Guia_Usuario_Router.pdf` | PDF | Guía de usuario: puertos (WAN/LAN), botón RESET y restablecimiento a valores de fábrica |
 | `politica_garantia_rt900.txt` | TXT | Política de garantía (12 meses, exclusiones, procedimiento de reclamo) |
 | `guia_rapida_rt900.html` | HTML | Restablecer contraseña de WiFi, cambiar canal WiFi |
 
@@ -126,7 +127,7 @@ la extensión del archivo:
 | `.html` / `.htm` | `BSHTMLLoader` |
 
 Esto permite subir manuales en cualquiera de los cuatro formatos exigidos
-desde la propia interfaz web (botón "Subir manuales").
+desde la propia interfaz web (botón **+** junto al cuadro de mensaje, o arrastrando el archivo al chat).
 
 ### Chunking
 
@@ -145,22 +146,22 @@ revisita explícitamente en la iteración de mejora (ver más abajo).
 
 ### Vectorización (embeddings)
 
-`CohereEmbeddings` con el modelo **`embed-multilingual-v3.0`** (API de
-Cohere), con normalización de vectores (coseno).
+`FastEmbedEmbeddings` (LangChain + **fastembed**, motor ONNX) con el modelo
+**`sentence-transformers/all-MiniLM-L6-v2`** (~90 MB, vectores de 384
+dimensiones), calculados **localmente** dentro del propio servidor. El modelo
+se puede cambiar con la variable de entorno `EMBEDDING_MODEL`.
 
-**Justificación:** se evaluaron primero embeddings locales
-(`sentence-transformers`/PyTorch, y luego `fastembed`/ONNX como alternativa
-más liviana), ambos ejecutando el modelo dentro del propio proceso. Se
-descartaron porque el plan gratuito de Render (512 MB de RAM) no alcanza
-para cargar ningún modelo de embeddings en memoria junto con Flask,
-ChromaDB y LangChain — el servicio se reiniciaba por "Ran out of memory".
-Se usa en su lugar la API de Cohere, que es multilingüe (clave porque los
-manuales y las preguntas están en español), gratuita para este volumen de
-uso, y no requiere cargar ningún modelo en el proceso: el servidor solo
-envía el texto por HTTP y recibe el vector, con un costo de memoria mínimo.
-Esto sigue cumpliendo el requisito de control del índice: el corpus
-completo nunca se envía a ningún servicio externo, solo fragmentos sueltos
-para generar su vector, igual que ya pasa con la generación (Groq).
+**Justificación:** la primera versión usaba `paraphrase-multilingual-MiniLM-L12-v2`
+con `sentence-transformers`/PyTorch (~470 MB de modelo más PyTorch). En el plan
+gratuito de Render (512 MB de RAM) el proceso se quedaba sin memoria a mitad
+del indexado y Render lo reiniciaba. Se cambió a fastembed, que ejecuta el
+modelo con ONNX sin PyTorch, y a un modelo más pequeño que sí cabe en la
+memoria disponible. Al calcularse localmente, **ningún texto del corpus sale
+del servidor para vectorizarse** y no se depende de otra API key, lo que
+refuerza el control del índice. La contrapartida es que `all-MiniLM-L6-v2`
+está entrenado principalmente en inglés: con manuales técnicos en español
+funciona razonablemente porque los términos técnicos coinciden (WAN, RESET,
+LED, WiFi), pero es algo menos preciso que un modelo multilingüe.
 
 ### Base de datos vectorial
 
@@ -207,7 +208,7 @@ nunca el corpus completo ni se usan los datos para entrenar).
    Chunking (500 / 50, RecursiveCharacterTextSplitter)
           │
           ▼
-   Embeddings vía API de Cohere (embed-multilingual-v3.0)
+   Embeddings locales con fastembed (all-MiniLM-L6-v2, ONNX)
           │
           ▼
    ChromaDB (persistente, metadatos: archivo + página)
@@ -253,14 +254,29 @@ nunca el corpus completo ni se usan los datos para entrenar).
 
   ```bash
   pip install -r requirements.txt -r eval/requirements-eval.txt
-  export GROQ_API_KEY="tu-api-key"
-  python eval/evaluar_ragas.py
+  # GROQ_API_KEY en el archivo .env
+
+  # Antes (configuración base)
+  python eval/evaluar_ragas.py --top-k 6 --modelo openai/gpt-oss-20b --modelo-juez openai/gpt-oss-20b --salida eval/resultados_before.csv
+  # Después (parámetro modificado)
+  python eval/evaluar_ragas.py --top-k 10 --modelo openai/gpt-oss-20b --modelo-juez openai/gpt-oss-20b --salida eval/resultados_after.csv
   ```
 
-- **Iteración de mejora (antes/después):** `eval/ejecutar_evaluacion_completa.sh`
-  corre automáticamente la evaluación dos veces: primero con la
-  configuración base (`chunk_size=500, chunk_overlap=50, top_k=6`) y luego
-  con el parámetro modificado (`top_k=10`), guardando
+- **Adaptación al plan gratuito de Groq:** Ragas hace muchas llamadas al
+  LLM juez y el plan gratuito limita los tokens por minuto y por día. Por
+  eso el script: hace una pausa entre preguntas (`--pausa`), califica de a
+  una llamada a la vez y reintenta ante errores 429; guarda cada respuesta
+  generada en `eval/resultados_*.respuestas.json` y cada calificación en
+  una caché en disco (`eval/.cache_ragas/`), de modo que si se agota la
+  cuota diaria basta con repetir el mismo comando más tarde y la evaluación
+  retoma donde quedó. La evaluación usó `openai/gpt-oss-20b` como generador
+  y como juez (la aplicación desplegada usa `openai/gpt-oss-120b`); como
+  ambas corridas comparten la misma configuración salvo `top_k`, la
+  comparación antes/después es válida.
+
+- **Iteración de mejora (antes/después):** la evaluación se corre dos veces,
+  primero con la configuración base (`chunk_size=500, chunk_overlap=50,
+  top_k=6`) y luego con el parámetro modificado (`top_k=10`), guardando
   `eval/resultados_before.csv/.png` y `eval/resultados_after.csv/.png`.
 
   **Parámetro modificado:** `top_k` de 6 → 10 fragmentos recuperados.
@@ -273,42 +289,65 @@ nunca el corpus completo ni se usan los datos para entrenar).
   contexto que recibe el modelo (sigue siendo pequeño frente al límite de
   tokens de Groq).
 
-  *(Los valores reales de las 4 métricas, antes y después, y el análisis de
-  cuál quedó más baja y a qué componente del pipeline se atribuye, se
-  completan en el PDF de evidencias tras ejecutar el script con una
-  `GROQ_API_KEY` real — ver sección siguiente.)*
+### Resultados
+
+| Métrica | Antes (`top_k=6`) | Después (`top_k=10`) | Cambio |
+|---|---|---|---|
+| faithfulness | 0,628 | 0,730 | +0,10 |
+| answer_relevancy | 0,427 | 0,363 | −0,06 |
+| context_precision | 0,492 | 0,467 | −0,03 |
+| context_recall | 0,650 | 0,750 | +0,10 |
+
+- **Métrica más baja:** `answer_relevancy`, antes y después de la mejora.
+- **Componente al que se atribuye:** principalmente a la **generación**. La
+  respuesta es un JSON con campos (`nivel_urgencia`, `fuente`,
+  `requiere_soporte_humano`) que no responden la pregunta en sí, y en las 5
+  preguntas fuera del corpus el asistente responde, como debe, que no hay
+  información, lo que Ragas califica con 0. No se atribuye al chunking:
+  `context_recall` muestra que los fragmentos sí contienen lo necesario.
+- **Efecto de la mejora:** subir `top_k` aumentó la cobertura
+  (`context_recall` +0,10) y el respaldo de las respuestas (`faithfulness`
+  +0,10), con una leve baja de `context_precision` porque con 10 de 14
+  fragmentos se recupera el 71 % del corpus y entra más ruido.
+  `answer_relevancy` no mejoró, lo que confirma que su causa está en el
+  formato de salida y no en la recuperación. En un corpus tan pequeño
+  conviene un valor intermedio (p. ej. `k = 8`), y la mejora de
+  `answer_relevancy` debe buscarse en el formato de la respuesta.
 
 ---
 
 ## Interfaz de chat conversacional
 
 - Construida en **Flask**, con HTML/CSS/JS propios (sin frameworks de
-  frontend), con un tema visual "mesa de ayuda técnica" en los colores de la
-  Konrad Lorenz (navy `#0a2f5c` + dorado `#e2ab3d`).
+  frontend), con un diseño de chat oscuro en los colores de la Konrad
+  Lorenz (navy `#0a2f5c` + dorado `#e2ab3d`).
 - **Conversación real:** cada sesión del navegador mantiene su propio
   historial (cookie de sesión + diccionario en memoria en el servidor); las
   preguntas de seguimiento se responden usando los turnos previos reales
-  (ver "Generación" arriba). Botón **"+ Nuevo chat"** para reiniciar la
-  conversación sin perder el índice de manuales.
+  (ver "Generación" arriba). En **Ajustes** (ícono de engranaje) está el
+  botón **"Nueva conversación"** para reiniciar el historial sin perder el
+  índice de manuales; ahí también se puede pegar la API key de Groq, elegir
+  el modelo y ajustar `k`.
 - Muestra las **fuentes** (documento y página) que respaldan cada respuesta,
   y un panel expandible **"Ver fragmentos y prompt enviado al modelo"** con
   el detalle completo de lo que se le envió al LLM.
 - Si la pregunta está fuera del corpus, el propio modelo lo indica en
   `diagnostico` y marca `requiere_soporte_humano: true`, mostrando una
   alerta visual en la tarjeta de respuesta.
-- Permite **subir manuales** (PDF/DOCX/TXT/HTML) desde la barra lateral, que
-  se reindexan automáticamente en segundo plano.
+- Permite **subir manuales** (PDF/DOCX/TXT/HTML) con el botón **+** o
+  arrastrándolos al chat; se indexan en segundo plano con una barra de
+  progreso.
 
 ### Despliegue
 
 Desplegado en **Render.com** (plan free):
 
-**URL pública:** `https://asistente-soporte-tecnico-2ux8.onrender.com`
+**URL pública:** https://asistente-soporte-tecnico-nq1w.onrender.com
 *(puede tardar ~30-50 segundos en responder la primera vez si el servicio
 estaba dormido — es una limitación del plan gratuito de Render, no un
 error.)*
 
-- `Procfile` → `gunicorn app:app --workers 1 --threads 8 --timeout 120`.
+- `Procfile` → `gunicorn app:app --workers 1 --worker-class gthread --threads 4 --timeout 300`.
   Se usa un solo worker porque el estado (índice de Chroma en memoria,
   historial de conversación por sesión) vive en el proceso, no en un
   datastore compartido; con más de un worker, cada uno tendría su propia
@@ -319,6 +358,8 @@ error.)*
   dashboard de Render, nunca en el repositorio).
 - `bootstrap()` en `app.py` se ejecuta al importar el módulo (no solo dentro
   de `if __name__ == "__main__":`), para que también corra bajo gunicorn.
+- **Memoria:** el plan gratuito tiene 512 MB de RAM; por eso los embeddings
+  usan fastembed/ONNX con un modelo pequeño (ver "Vectorización").
 - **Disco efímero:** el plan gratuito de Render borra `chroma/` en cada
   reinicio o redeploy. Por eso los manuales de prueba (`manuales/*`) sí se
   versionan en el repositorio (no están en `.gitignore`): así `bootstrap()`
@@ -346,7 +387,7 @@ python app.py
 ```
 
 La primera vez que se indexa, se descarga el modelo de embeddings
-(~120 MB); quedará cacheado localmente para las siguientes ejecuciones.
+(~90 MB); quedará cacheado localmente para las siguientes ejecuciones.
 
 ### Procedimiento de despliegue (Render.com)
 
@@ -354,7 +395,7 @@ La primera vez que se indexa, se descarga el modelo de embeddings
 2. En Render: **New > Web Service**, conectar el repositorio.
 3. Render detecta `render.yaml` (o configurar manualmente: build command
    `pip install -r requirements.txt`, start command
-   `gunicorn app:app --workers 1 --threads 8 --timeout 120`).
+   `gunicorn app:app --workers 1 --worker-class gthread --threads 4 --timeout 300`).
 4. En **Environment**, agregar la variable `GROQ_API_KEY` con la API key
    real (nunca se incluye en el repositorio).
 5. Desplegar y esperar el build; copiar la URL pública generada.
@@ -373,27 +414,26 @@ La primera vez que se indexa, se descarga el modelo de embeddings
 ├── static/
 │   ├── css/style.css
 │   └── js/chat.js
-├── manuales/                       # Corpus de prueba (router RT-900: pdf, txt, html)
+├── manuales/                       # Corpus de prueba (router RT-900: 2 pdf, txt, html)
 ├── eval/
 │   ├── preguntas_eval.json         # 20 preguntas con ground truth (15 en corpus + 5 fuera)
 │   ├── evaluar_ragas.py            # Script de evaluación con Ragas
 │   ├── ejecutar_evaluacion_completa.sh  # Corre evaluación antes/después de la mejora
 │   ├── requirements-eval.txt       # Dependencias extra solo para evaluar (no para desplegar)
-│   ├── resultados_before.csv/.png  # (se genera al ejecutar el script)
-│   └── resultados_after.csv/.png   # (se genera al ejecutar el script)
+│   ├── resultados_before.csv/.png  # Resultados con top_k = 6
+│   ├── resultados_after.csv/.png   # Resultados con top_k = 10
+│   └── resultados_*.respuestas.json  # Respuestas generadas (para retomar sin regenerar)
 ├── requirements.txt
 ├── Procfile
 ├── render.yaml
 └── .gitignore
 ```
 
-## Próximos pasos
+## Trabajo futuro
 
-- Ejecutar `eval/ejecutar_evaluacion_completa.sh` con una `GROQ_API_KEY`
-  real para obtener los valores numéricos antes/después y completarlos en
-  el PDF de evidencias.
-- Tomar las capturas de pantalla de la interfaz desplegada: una conversación
-  con pregunta de seguimiento, y un caso fuera del corpus.
-- Ensamblar el PDF final de evidencias (diagrama, capturas, tabla de
-  métricas Ragas con el análisis antes/después, URL pública y enlace al
-  repositorio).
+- Ajustar el formato de salida (o evaluar solo `diagnostico` y
+  `pasos_solucion`) para mejorar `answer_relevancy`, la métrica más baja.
+- Probar un valor intermedio de recuperación (`top_k = 8`) y un modelo de
+  embeddings multilingüe si se dispone de más memoria en el servidor.
+- Persistir el índice y el historial en un almacenamiento externo para no
+  depender del disco efímero de Render.

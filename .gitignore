@@ -5,3 +5,4 @@ __pycache__/
 .env
 chroma/
 eval/chroma_eval/
+eval/.cache_ragas/
