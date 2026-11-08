@@ -168,6 +168,9 @@ class RagResult:
     respuesta_cruda: str     # texto tal cual lo devolvió el modelo
     respuesta: dict | None   # JSON ya parseado (diagnostico, pasos_solucion, ...) o None si falló el parseo
     error_parseo: str | None = None
+    # Avance 3: consumo de la llamada al LLM, para comparar el costo del pipeline
+    # fijo contra el agente: {"input_tokens", "output_tokens", "total_tokens"}.
+    uso: dict = field(default_factory=dict)
 
     def fuentes(self) -> str:
         por_archivo: dict[str, set[str]] = {}
@@ -352,6 +355,15 @@ class RagEngine:
         archivos = len({nombre_fuente(d) for d in documents})
         return IndexStats(archivos, len(documents), len(chunks), avisos)
 
+    # -- búsqueda por similitud (la usa la tool del agente, Avance 3) -----------
+    def buscar(self, consulta: str, k: int = 6) -> list:
+        """Devuelve los k fragmentos (Documents de LangChain) más parecidos a la
+        consulta. Es la misma recuperación del Avance 2, expuesta como método
+        público para que el agente la use como tool."""
+        if not self.ready:
+            raise RuntimeError("Primero indexa los manuales (o carga un índice existente).")
+        return self._vector_store.similarity_search(consulta, k=k)
+
     # -- recuperar, armar mensajes (Avance 1 + historial) y generar -------------
     def ask(
         self,
@@ -390,9 +402,11 @@ class RagEngine:
         mensajes_base = construir_mensajes_para_llm(fragmentos_contexto, pregunta)
         mensajes = _mensajes_con_historial(mensajes_base, historial)
 
-        respuesta_cruda = llm.invoke(_a_mensajes_langchain(mensajes)).content
+        salida_llm = llm.invoke(_a_mensajes_langchain(mensajes))
+        respuesta_cruda = salida_llm.content
         if not isinstance(respuesta_cruda, str):
             respuesta_cruda = str(respuesta_cruda)
+        uso = dict(getattr(salida_llm, "usage_metadata", None) or {})
 
         respuesta, error = parsear_json_respuesta(respuesta_cruda)
 
@@ -403,4 +417,5 @@ class RagEngine:
             respuesta_cruda=respuesta_cruda,
             respuesta=respuesta,
             error_parseo=error,
+            uso=uso,
         )

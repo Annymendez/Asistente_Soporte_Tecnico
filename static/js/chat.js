@@ -116,7 +116,7 @@
       html += `<p class="h" style="margin-top:10px">Pasos a seguir</p><ol>${pasos.map((p) => `<li>${esc(p)}</li>`).join("")}</ol>`;
     }
     html += `<p style="margin-top:10px"><span class="badge" style="background:${u.color}22;color:${u.color};border-color:${u.color}55">${esc(u.label)}</span></p>`;
-    if (r.fuente) html += `<p style="margin-top:6px;color:var(--muted);font-size:13px">Fuente citada: ${esc(r.fuente)}</p>`;
+    if (r.fuente) html += `<p style="margin-top:6px;color:var(--muted);font-size:13px">Fuente citada por el agente: ${esc(r.fuente)}</p>`;
     if (r.requiere_soporte_humano) {
       html += `<p class="warn">⚠️ Se recomienda escalar este caso a soporte humano.</p>`;
     }
@@ -127,25 +127,67 @@
     const d = document.createElement("details");
     d.className = "ctx";
     const s = document.createElement("summary");
-    s.textContent = "Ver fragmentos y mensajes enviados al modelo";
+    const tools = r.tools || [];
+    s.textContent = tools.length
+      ? `Ver herramientas usadas (${tools.length}) y fuentes`
+      : "Ver detalle: el agente respondió sin herramientas";
     d.appendChild(s);
-    const h1 = document.createElement("h4");
-    h1.textContent = `Fragmentos recuperados (${r.fragmentos.length}) · ~${(r.prompt || "").length / 4 | 0} tokens aprox. de contexto`;
-    d.appendChild(h1);
-    r.fragmentos.forEach((f, i) => {
+
+    // Qué hizo el agente: tools, argumentos y costo de la pregunta
+    const h0 = document.createElement("h4");
+    h0.textContent = "Herramientas llamadas por el agente";
+    d.appendChild(h0);
+    if (!tools.length) {
+      const p0 = document.createElement("p");
+      p0.textContent = "Ninguna: no hizo falta consultar la base ni la web.";
+      d.appendChild(p0);
+    }
+    tools.forEach((t, i) => {
       const box = div("frag");
       const b = document.createElement("b");
-      b.textContent = `[${i + 1}] ${f.fuente} — Pág. ${f.pagina}`;
+      b.textContent = `${i + 1}. ${t.nombre}`;
       const pre = document.createElement("pre");
-      pre.textContent = f.texto;
+      pre.textContent = `argumentos: ${JSON.stringify(t.args)}\nresultado: ${t.resumen} (${t.duracion_ms} ms)`;
       box.append(b, pre);
       d.appendChild(box);
     });
-    const h2 = document.createElement("h4");
-    h2.textContent = "Mensajes enviados al modelo (system + few-shot + turno real)";
-    const pre = document.createElement("pre");
-    pre.textContent = r.prompt;
-    d.append(h2, pre);
+    const tk = (r.tokens && r.tokens.total_tokens) || 0;
+    const cost = document.createElement("p");
+    cost.textContent = `Llamadas al LLM: ${r.llamadas_llm} · tokens: ${tk} · tiempo: ${r.tiempo_s} s` +
+      (r.limite_alcanzado ? " · se alcanzó el límite de iteraciones" : "");
+    d.appendChild(cost);
+
+    // Fuentes separadas por origen
+    const frs = r.fragmentos || [];
+    if (frs.length) {
+      const h1 = document.createElement("h4");
+      h1.textContent = `Origen: base de conocimientos (${frs.length} fragmentos)`;
+      d.appendChild(h1);
+      frs.forEach((f, i) => {
+        const box = div("frag");
+        const b = document.createElement("b");
+        b.textContent = `[${i + 1}] ${f.fuente} — Pág. ${f.pagina}`;
+        const pre = document.createElement("pre");
+        pre.textContent = f.texto;
+        box.append(b, pre);
+        d.appendChild(box);
+      });
+    }
+    const ws = r.web || [];
+    if (ws.length) {
+      const h2 = document.createElement("h4");
+      h2.textContent = `Origen: web (${ws.length} resultados)`;
+      d.appendChild(h2);
+      ws.forEach((w, i) => {
+        const box = div("frag");
+        const b = document.createElement("b");
+        b.textContent = `[web ${i + 1}] ${w.titulo}`;
+        const pre = document.createElement("pre");
+        pre.textContent = `${w.url}\n${w.extracto}`;
+        box.append(b, pre);
+        d.appendChild(box);
+      });
+    }
     return d;
   }
 
@@ -155,7 +197,23 @@
     if (o.html) { r.bubble.innerHTML = o.html; }
     else if (o.md) { r.bubble.innerHTML = md(text); typeset(r.bubble); }
     else { r.bubble.classList.add("plain"); r.bubble.textContent = text; }
-    if (o.sources) { const m = div("meta"); m.textContent = "Fuentes: " + o.sources; r.col.appendChild(m); }
+    if (o.sources) { const m = div("meta"); m.textContent = "Fuente (base): " + o.sources; r.col.appendChild(m); }
+    if (o.web && o.web.length) {
+      const m = div("meta");
+      m.append("Fuente (web): ");
+      o.web.forEach((w, i) => {
+        if (i) m.append(" · ");
+        if (/^https?:\/\//i.test(w.url)) {
+          const a = document.createElement("a");
+          a.href = w.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+          a.textContent = w.titulo || w.url;
+          m.appendChild(a);
+        } else {
+          m.append(w.titulo || w.url);
+        }
+      });
+      r.col.appendChild(m);
+    }
     if (o.ctx) r.col.appendChild(ctxDetails(o.ctx));
     if (o.quick) {
       const q = div("quick");
@@ -236,7 +294,7 @@
   function greet(s) {
     const t = s.task;
     const running = t.state === "running";
-    addBot("¡Hola! 👋 Soy tu asistente de soporte técnico. Agrega el manual de un producto (PDF, DOCX, TXT o HTML) con el botón + y cuéntame el problema que tienes.", {
+    addBot("¡Hola! 👋 Soy tu asistente de soporte técnico (un agente que decide cuándo consultar los manuales, calcular la garantía o buscar en la web). Agrega el manual de un producto (PDF, DOCX, TXT o HTML) con el botón + y cuéntame el problema que tienes.", {
       quick: !s.ready && !running ? [
         { label: "Agregar manual", run: () => el.file.click() },
         { label: "Indexar carpeta manuales/", run: syncFolder },
@@ -325,7 +383,7 @@
       });
       hideTyping();
       if (r.respuesta) {
-        const row = addBot("", { html: soporteHTML(r.respuesta), sources: r.fuentes, ctx: r });
+        const row = addBot("", { html: soporteHTML(r.respuesta), sources: r.fuentes, web: r.web, ctx: r });
         if (r.error_parseo) {
           const warn = div("meta");
           warn.style.color = "#e5484d";
@@ -335,7 +393,7 @@
       } else {
         addBot("No pude interpretar la respuesta del modelo como JSON" +
           (r.error_parseo ? " (" + r.error_parseo + ")" : "") + ". Esto es lo que devolvió:\n\n" + r.respuesta_cruda,
-          { error: true, sources: r.fuentes, ctx: r });
+          { error: true, sources: r.fuentes, web: r.web, ctx: r });
       }
     } catch (e) {
       hideTyping();

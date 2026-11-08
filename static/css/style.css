@@ -211,3 +211,7 @@ details.ctx .frag b { color: var(--text); font-weight: 600; }
   body { padding: 0; }
   .chat { max-height: none; border: 0; border-radius: 0; }
 }
+
+/* Avance 3: enlaces de fuentes web y párrafos del detalle del agente */
+.meta a { color: var(--blue); text-decoration: underline; }
+details.ctx p { margin: 6px 0; color: var(--text); }

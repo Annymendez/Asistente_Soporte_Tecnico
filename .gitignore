@@ -6,3 +6,5 @@ __pycache__/
 chroma/
 eval/chroma_eval/
 eval/.cache_ragas/
+eval/chroma_eval_agente/
+logs/

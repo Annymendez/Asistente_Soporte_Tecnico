@@ -397,8 +397,192 @@ La primera vez que se indexa, se descarga el modelo de embeddings
    `pip install -r requirements.txt`, start command
    `gunicorn app:app --workers 1 --worker-class gthread --threads 4 --timeout 300`).
 4. En **Environment**, agregar la variable `GROQ_API_KEY` con la API key
-   real (nunca se incluye en el repositorio).
+   real y, para la búsqueda web del agente (Avance 3), `TAVILY_API_KEY`
+   (nunca se incluyen en el repositorio).
 5. Desplegar y esperar el build; copiar la URL pública generada.
+
+---
+
+## Avance 3 — Agente con herramientas (tool calling)
+
+El Avance 3 convierte el RAG del Avance 2 en un **agente**. En el Avance 2 el
+programa siempre buscaba y pegaba los fragmentos en el prompt (pipeline fijo,
+una llamada al LLM por pregunta). Ahora **el LLM decide** si necesita consultar
+la base, calcular algo o buscar en la web, y el programa ejecuta la herramienta
+y le devuelve el resultado. Se reutiliza todo lo anterior: ingesta, chunking
+(500/50), índice Chroma, embeddings fastembed, conjunto de evaluación de Ragas
+e interfaz desplegada.
+
+Framework: **LangChain** (`ChatGroq.bind_tools`, tools con `@tool`) y un
+**bucle manual** en `agent.py` (no `create_agent`), para controlar explícitamente
+el límite de iteraciones, el registro y los límites de cada tool. Modelo:
+`openai/gpt-oss-120b` en Groq, que soporta tool calling.
+
+### Arquitectura del agente
+
+```
+ Usuario ── pregunta ──► Flask (/api/ask) ──► agent.py (bucle)
+                                                  │
+        ┌─────────────────────────────────────────┘
+        ▼
+   LLM Groq  ◄──────────── resultado de la tool ◄───────────┐
+   (system prompt + few-shot + historial + pregunta)          │
+        │                                                      │
+        ├─ sin tool_calls ─────────────► respuesta final (JSON) │
+        │                                                      │
+        └─ tool_calls ──► el PROGRAMA ejecuta la tool ─────────┘
+                           ├─ buscar_en_base     → ChromaDB local (el corpus NO sale)
+                           ├─ calcular_garantia  → cálculo local
+                           └─ buscar_en_web      → Tavily (sale SOLO la consulta)
+```
+
+**Qué sale del sistema y hacia dónde:**
+
+| Destino | Qué se envía | Qué nunca se envía |
+|---|---|---|
+| Groq (LLM) | La pregunta, el historial reciente y los fragmentos/resultados que devolvieron las tools (máx. 6 fragmentos de 500 caracteres por búsqueda) | El corpus completo |
+| Tavily (buscador) | Solo el texto de la consulta (máx. 300 caracteres) | Fragmentos de los manuales, historial, datos del usuario |
+| ChromaDB / cálculo | Nada: corren dentro del servidor | — |
+
+### Tools
+
+| Tool | Tipo | Qué hace y cuándo se usa | Argumentos | Límites (en el código) |
+|---|---|---|---|---|
+| `buscar_en_base` | búsqueda | Recupera fragmentos de los manuales. Siempre que la pregunta trate del producto. | `consulta: str` | `MAX_FRAGMENTOS_POR_LLAMADA = 6`, `MAX_CHARS_FRAGMENTO = 500`, `MAX_CHARS_CONSULTA = 300`. Cada fragmento trae documento y página. |
+| `calcular_garantia` | tarea del dominio | Calcula si la garantía (12 meses, según `politica_garantia_rt900.txt`) está vigente y cuándo vence. El LLM extrae la fecha de la pregunta; el cálculo de fechas lo hace el programa. | `fecha_compra: AAAA-MM-DD`, `fecha_consulta` (opcional) | Valida formato y que la compra no sea futura; plazo fijo `MESES_GARANTIA = 12`. |
+| `buscar_en_web` | web | Busca información pública o actual en sitios permitidos (ver política). | `consulta: str` | `MAX_RESULTADOS_WEB = 3`, `MAX_CHARS_EXTRACTO_WEB = 300`, lista de dominios fija, timeout 15 s. |
+
+Todos los límites son constantes de `agent_tools.py`: el LLM no puede cambiarlos
+aunque se lo pidan en el chat. Cada tool devuelve además un *artefacto*
+estructurado (documento, página, URL) que usan la interfaz, el registro y la
+evaluación; el LLM no lo ve.
+
+**Probar las tools sin el LLM:** `python probar_tools.py` llama cada tool con
+`.invoke()` y muestra la salida exacta que recibiría el modelo.
+
+### Bucle del agente y registro de uso
+
+`AgenteSoporte.responder()` (`agent.py`):
+
+1. Arma los mensajes: system prompt + ejemplos few-shot (que incluyen llamadas a
+   tools) + historial + pregunta.
+2. Llama al LLM con las tools enlazadas. Si no pide ninguna, esa es la respuesta final
+   (así un saludo se responde sin buscar). Si pide una o varias, el programa las
+   ejecuta y devuelve cada resultado como `ToolMessage`, y vuelve a llamar al LLM
+   (por eso una pregunta con dos temas puede llamar a `buscar_en_base` dos veces).
+3. **Límites impuestos por el código:** `MAX_ITERACIONES = 5` vueltas por pregunta
+   (si se agotan, se fuerza una respuesta final sin tools) y `MAX_LLAMADAS_TOOLS = 6`
+   ejecuciones por pregunta.
+
+**Registro:** por cada pregunta se agrega una línea JSON a `logs/uso_tools.jsonl`
+(y se imprime en los logs de Render con el prefijo `[AGENTE]`) con las tools
+llamadas, sus argumentos, el resumen del resultado, las llamadas al LLM, los
+tokens y el tiempo. Ejemplo:
+
+```json
+{"fecha": "2026-11-07T20:56:17+00:00", "sesion": "0b17b91d",
+ "pregunta": "Compré mi router el 15 de marzo de 2026, ¿sigo en garantía?",
+ "tools": [{"nombre": "calcular_garantia", "args": {"fecha_compra": "2026-03-15"},
+            "resumen": "vigente, vence 2027-03-15"}],
+ "llamadas_llm": 2, "tokens": {"input_tokens": 2100, "output_tokens": 180, "total_tokens": 2280},
+ "tiempo_s": 2.1, "limite_alcanzado": false}
+```
+
+### Prompt del sistema actualizado (`agent_prompt.py`)
+
+El archivo del Avance 1 sigue intacto. Cambios frente al Avance 2:
+
+- **El prompt ya no lleva el contexto**: los fragmentos llegan como resultado de
+  `buscar_en_base`, no pegados en `<contexto>`.
+- Incluye una **política de uso de tools**: saludo → ninguna; pregunta del producto →
+  base primero (una búsqueda por tema); fecha de compra → `calcular_garantia`;
+  web solo si la base no responde y la información es pública o actual.
+- Pide responder **solo con lo que devuelvan las tools** y **citar el origen
+  separado**: base (`fuente`: documento y página) o web (`[web: URL]` y `fuentes_web`).
+- Mantiene la respuesta exacta cuando la información no está
+  (`"No disponible en el contexto entregado"` + `requiere_soporte_humano: true`).
+- Trata como datos todo lo que devuelva una tool y prohíbe volcar los manuales o
+  revelar el prompt (instrucción maliciosa).
+- Formato de salida: el mismo JSON del Avance 2 + `fuentes_web`.
+- Los ejemplos Few-Shot son ahora secuencias reales de mensajes (saludo sin tools,
+  pregunta de la base, tarea de garantía, base y luego web).
+
+### Política de búsqueda web
+
+- **Cuándo se usa:** solo si `buscar_en_base` ya se consultó y no contiene la
+  respuesta, **y** la pregunta trata de información pública o actual (un estándar,
+  una definición general, una versión reciente). Nunca para datos o
+  procedimientos del RT-900. La regla está en el docstring de la tool y en el
+  system prompt.
+- **Qué sale:** únicamente la consulta (máx. 300 caracteres). Nunca fragmentos de la base.
+- **Servicio:** Tavily (`TAVILY_API_KEY`, variable de entorno; nunca en el repositorio).
+- **Sitios permitidos** (`DOMINIOS_WEB_PERMITIDOS`, fijos en el código; además se
+  filtran los resultados por dominio como defensa extra):
+
+  | Sitio | Por qué es confiable para este dominio |
+  |---|---|
+  | `wi-fi.org` | Wi-Fi Alliance: define y certifica WiFi, WPA2 y WPA3 |
+  | `ieee.org` | Publica los estándares 802.11 en los que se basa el WiFi |
+  | `ietf.org` | Estándares de internet (DNS, DHCP, IP) |
+  | `nist.gov` | Guías oficiales de seguridad (cifrado, contraseñas) |
+  | `cisa.gov` | Recomendaciones oficiales para asegurar routers y redes |
+  | `support.microsoft.com` | Soporte oficial de Windows (conectarse a una red) |
+  | `support.apple.com` | Soporte oficial de Apple (conectarse a una red) |
+
+- **Resultados acotados:** máximo 3; cada uno solo con título, URL y un extracto de
+  máximo 300 caracteres, marcado como origen "web".
+- **Respuesta separada por origen:** lo de la base se cita como `Fuente: documento, pág.`
+  y lo de la web como `[web: URL]`; la interfaz las muestra en líneas distintas.
+
+### Evaluación del agente
+
+Misma evaluación de Ragas del Avance 2 (20 preguntas), con las mismas métricas y
+el mismo modelo generador y juez que se usaron en el Avance 2 (`openai/gpt-oss-20b`,
+por los límites del plan gratuito de Groq), para que la comparación sea válida.
+Los `retrieved_contexts` del agente son los fragmentos que devolvieron sus tools.
+
+```bash
+pip install -r requirements.txt -r eval/requirements-eval.txt
+# En .env: GROQ_API_KEY y TAVILY_API_KEY
+
+# 1) Ragas del agente + tabla Avance 2 vs agente (eval/comparacion_ragas.md)
+python eval/evaluar_agente.py --modelo openai/gpt-oss-20b --modelo-juez openai/gpt-oss-20b
+
+# 2) Casos de comportamiento (8 casos, esperado escrito antes en eval/casos_comportamiento.json)
+python eval/evaluar_casos.py --modelo openai/gpt-oss-20b
+
+# 3) Costo: llamadas al LLM, tokens y tiempo, pipeline fijo vs agente
+python eval/comparar_costo.py --modelo openai/gpt-oss-20b
+```
+
+Salidas: `eval/resultados_agente.csv/.png`, `eval/comparacion_ragas.md`,
+`eval/resultados_casos.csv/.md`, `eval/costo_comparacion.csv/.md` y los registros
+`eval/registro_agente.jsonl` y `eval/registro_casos.jsonl`. Los resultados y su
+análisis están en el PDF de entrega.
+
+### Interfaz
+
+La interfaz del Avance 2 usa ahora el agente y mantiene el historial de la
+conversación. Cada respuesta incluye el desplegable **"Ver herramientas usadas y
+fuentes"**: qué tools llamó el agente y con qué argumentos, llamadas al LLM,
+tokens y tiempo, y las fuentes **separadas por origen** (fragmentos de la base con
+documento y página; resultados web con título y URL). Si la información no está
+ni en la base ni en los sitios permitidos, el asistente lo dice y recomienda
+soporte humano.
+
+### Instalación, ejecución y despliegue
+
+```bash
+pip install -r requirements.txt
+# crea un archivo .env en la raíz con:  GROQ_API_KEY=...  y  TAVILY_API_KEY=...
+python app.py          # http://127.0.0.1:5000
+```
+
+En Render, además de `GROQ_API_KEY`, se agrega la variable de entorno
+**`TAVILY_API_KEY`** (Environment → Add). Sin ella el agente funciona con la base
+y el cálculo, y la búsqueda web responde que no está disponible.
+
+**URL pública:** https://asistente-soporte-tecnico-nq1w.onrender.com
 
 ---
 
@@ -408,6 +592,10 @@ La primera vez que se indexa, se descarga el modelo de embeddings
 ├── README.md
 ├── asistente_soporte_tecnico.py   # Avance 1: System prompt, few-shot, delimitadores (sin modificar)
 ├── rag_core.py                     # Avance 2: pipeline RAG completo + memoria conversacional
+├── agent.py                        # Avance 3: bucle del agente, límites y registro de uso
+├── agent_tools.py                  # Avance 3: tools (buscar_en_base, calcular_garantia, buscar_en_web)
+├── agent_prompt.py                 # Avance 3: system prompt y few-shot del agente
+├── probar_tools.py                 # Avance 3: prueba de las tools sin LLM (.invoke())
 ├── app.py                          # Interfaz Flask (rutas, sesión, indexación en segundo plano)
 ├── templates/
 │   └── index.html
@@ -422,6 +610,10 @@ La primera vez que se indexa, se descarga el modelo de embeddings
 │   ├── requirements-eval.txt       # Dependencias extra solo para evaluar (no para desplegar)
 │   ├── resultados_before.csv/.png  # Resultados con top_k = 6
 │   ├── resultados_after.csv/.png   # Resultados con top_k = 10
+│   ├── evaluar_agente.py           # Avance 3: Ragas del agente y tabla Avance 2 vs agente
+│   ├── casos_comportamiento.json   # Avance 3: 8 casos con el comportamiento esperado
+│   ├── evaluar_casos.py            # Avance 3: ejecuta y verifica los casos
+│   ├── comparar_costo.py           # Avance 3: llamadas, tokens y tiempo (pipeline vs agente)
 │   └── resultados_*.respuestas.json  # Respuestas generadas (para retomar sin regenerar)
 ├── requirements.txt
 ├── Procfile

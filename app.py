@@ -1,5 +1,6 @@
 """
-app.py — Asistente de Soporte Técnico (RAG + Groq) con interfaz de chat.
+app.py — Asistente de Soporte Técnico (agente con tools + RAG + Groq) con interfaz de chat.
+(Avance 3: /api/ask ahora usa el agente de agent.py en lugar del pipeline fijo.)
 
     python app.py     →     http://127.0.0.1:5000
     (ábrelo en VS Code con: Ctrl+Shift+P → "Simple Browser: Show")
@@ -20,6 +21,8 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 import rag_core as rag  # noqa: E402  (después de cargar el .env)
+from agent import AgenteSoporte  # noqa: E402
+from agent_tools import DOMINIOS_WEB_PERMITIDOS  # noqa: E402
 
 MANUALES_DIR = BASE_DIR / "manuales"
 MANUALES_DIR.mkdir(exist_ok=True)
@@ -31,6 +34,7 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 engine = rag.RagEngine()
+agente = AgenteSoporte(engine)
 
 SETTINGS = {
     "api_key": os.getenv("GROQ_API_KEY", "").strip(),
@@ -152,7 +156,8 @@ def status():
         docs = list(STATE["docs"])
     count = engine.count() if (engine.ready and task["state"] != "running") else None
     return jsonify(ready=engine.ready, count=count, docs=docs, task=task,
-                   has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"])
+                   has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"],
+                   web_enabled=bool(os.getenv("TAVILY_API_KEY", "").strip()))
 
 
 @app.post("/api/upload")
@@ -212,8 +217,8 @@ def ask():
     with HIST_LOCK:
         historial = list(HISTORIALES.get(sid, []))
     try:
-        res = engine.ask(pregunta, historial=historial, k=SETTINGS["k"],
-                         model=SETTINGS["model"], api_key=SETTINGS["api_key"])
+        res = agente.responder(pregunta, historial=historial, k=SETTINGS["k"],
+                               model=SETTINGS["model"], api_key=SETTINGS["api_key"], sid=sid)
     except Exception as exc:
         traceback.print_exc()
         return jsonify(error=(str(exc).strip() or type(exc).__name__)[:500]), 500
@@ -227,10 +232,16 @@ def ask():
         respuesta=res.respuesta,
         error_parseo=res.error_parseo,
         respuesta_cruda=res.respuesta_cruda,
-        fuentes=res.fuentes(),
-        prompt=res.prompt_texto(),
-        fragmentos=[{"fuente": rag.nombre_fuente(d), "pagina": rag.numero_pagina(d), "texto": d.page_content}
-                    for d in res.fragmentos],
+        # Fuentes separadas por origen (salen de lo que devolvieron las tools):
+        fuentes=res.fuentes_base(),
+        fragmentos=res.fragmentos,           # base: documento, página y texto
+        web=res.resultados_web,              # web: título, URL y extracto
+        # Trazabilidad del agente:
+        tools=res.tools_usadas,
+        llamadas_llm=res.llamadas_llm,
+        tokens=res.tokens,
+        tiempo_s=round(res.tiempo_s, 2),
+        limite_alcanzado=res.limite_alcanzado,
     )
 
 
