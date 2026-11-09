@@ -1,0 +1,26 @@
+{
+  "placa1.jpg": {
+    "marca": "Lenovo",
+    "modelo": "ADLX65YCC3E",
+    "numero_serie": "8SGX21J75548C1TJ",
+    "voltaje": "100-240V",
+    "frecuencia": "50-60Hz",
+    "potencia_o_corriente": "65W"
+  },
+  "placa2.jpg": {
+    "marca": "TP-Link",
+    "modelo": "XC220-G3v",
+    "numero_serie": "TPLG2D8B74E8",
+    "voltaje": "12V",
+    "frecuencia": null,
+    "potencia_o_corriente": "1A"
+  },
+  "placa3.jpg": {
+    "marca": "Lenovo",
+    "modelo": "IdeaPad 5 2-in-1 14AKP10",
+    "numero_serie": "YX0JXHX2",
+    "voltaje": "20V",
+    "frecuencia": null,
+    "potencia_o_corriente": "3.25A"
+  }
+}
