@@ -106,3 +106,15 @@ Toda respuesta del asistente sigue este esquema JSON fijo:
   datos.
 - Evaluar la precisión de las respuestas contra un set de preguntas de
   prueba basadas en el manual real.
+
+
+## Avance 3 — agente con tools (rama liviana para Render)
+
+Esta rama (`deploy-estable`) incluye el agente del Avance 3 pensado para el plan gratuito de Render (512 MB):
+
+- `agent.py`, `agent_tools.py`, `agent_prompt.py`: bucle manual del agente, las 3 tools (`buscar_en_base`, `calcular_garantia`, `buscar_en_web`) y el prompt. Son los mismos archivos de la rama `main`.
+- `manuales/` va dentro del repositorio (2 PDF, 1 TXT, 1 HTML): al arrancar, el servidor los indexa solo, sin subir nada desde la interfaz.
+- `rag_core.py`: lee PDF, TXT y HTML solo con la biblioteca estándar (sin docx, bs4 ni lxml) y desactiva la telemetría de ChromaDB.
+- No incluye `eval/` ni el historial de conversación; la evaluación completa (Ragas, casos y costo) está en `main`.
+
+Variables de entorno en Render: `GROQ_API_KEY` y `TAVILY_API_KEY` (nunca en el repositorio). Sin `TAVILY_API_KEY` el agente funciona, pero sin búsqueda web.

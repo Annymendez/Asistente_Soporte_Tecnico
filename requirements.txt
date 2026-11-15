@@ -9,3 +9,4 @@ langchain-groq
 fastembed
 chromadb
 pypdf
+requests

@@ -11,5 +11,7 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false   # se pega el valor real desde el Dashboard, nunca en el repo
+      - key: TAVILY_API_KEY
+        sync: false   # búsqueda web del agente; si falta, el agente responde sin web
       - key: PYTHON_VERSION
         value: 3.11.9

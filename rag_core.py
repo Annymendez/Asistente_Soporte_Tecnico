@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from html.parser import HTMLParser
+
+from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from asistente_soporte_tecnico import construir_mensajes_para_llm
@@ -37,6 +40,14 @@ DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
+# Formatos que se indexan desde la carpeta manuales/. Solo se usan librerías ya
+# instaladas (pypdf + la biblioteca estándar), para no sumar memoria en Render.
+EXTENSIONES_SOPORTADAS = (".pdf", ".txt", ".html", ".htm")
+
+# Turnos previos que acepta el agente como historial (en esta rama no se guarda
+# historial entre preguntas, pero el agente lo admite).
+MAX_TURNOS_HISTORIAL = 6
+
 ProgressCallback = Callable[[float, str], None]
 
 CAMPOS_JSON = ("diagnostico", "pasos_solucion", "nivel_urgencia", "fuente", "requiere_soporte_humano")
@@ -48,9 +59,10 @@ def nombre_fuente(doc) -> str:
 
 
 def numero_pagina(doc) -> str:
-    """PyPDFLoader numera desde 0; mostramos la página tal como la ve el usuario."""
+    """PyPDFLoader numera desde 0; mostramos la página tal como la ve el usuario.
+    Para TXT/HTML no hay páginas, así que se usa '-' como marcador."""
     p = doc.metadata.get("page")
-    return str(p + 1) if isinstance(p, int) else "?"
+    return str(p + 1) if isinstance(p, int) else "-"
 
 
 def _limpiar_metadata(doc):
@@ -59,6 +71,52 @@ def _limpiar_metadata(doc):
         k: v for k, v in doc.metadata.items() if isinstance(v, (str, int, float, bool))
     }
     return doc
+
+
+class _HTMLATexto(HTMLParser):
+    """Extrae el texto visible de un HTML con la biblioteca estándar."""
+
+    _IGNORAR = {"script", "style", "head", "noscript"}
+
+    def __init__(self):
+        super().__init__()
+        self._partes: list[str] = []
+        self._ignorando = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._IGNORAR:
+            self._ignorando += 1
+        elif tag in {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._partes.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._IGNORAR and self._ignorando:
+            self._ignorando -= 1
+
+    def handle_data(self, data):
+        if not self._ignorando:
+            self._partes.append(data)
+
+    def texto(self) -> str:
+        return re.sub(r"\n\s*\n+", "\n\n", "".join(self._partes)).strip()
+
+
+def _cargar_documento(path: Path | str):
+    """PDF con PyPDFLoader; TXT y HTML con la biblioteca estándar."""
+    ruta = Path(path)
+    ext = ruta.suffix.lower()
+    if ext == ".pdf":
+        from langchain_community.document_loaders import PyPDFLoader
+
+        return PyPDFLoader(str(ruta)).load()
+    if ext in (".txt", ".html", ".htm"):
+        crudo = ruta.read_text(encoding="utf-8", errors="replace")
+        if ext != ".txt":
+            parser = _HTMLATexto()
+            parser.feed(crudo)
+            crudo = parser.texto()
+        return [Document(page_content=crudo, metadata={"source": str(ruta)})]
+    raise ValueError(f"Formato no soportado: '{ext}'. Permitidos: " + ", ".join(EXTENSIONES_SOPORTADAS))
 
 
 def _a_mensajes_langchain(mensajes: list[dict]):
@@ -112,7 +170,8 @@ class RagResult:
             return (0, int(p)) if p.isdigit() else (1, 0)
 
         return " · ".join(
-            f"{nombre} (pág. {', '.join(sorted(pags, key=orden))})"
+            f"{nombre} (pág. {', '.join(sorted((p for p in pags if p != '-'), key=orden))})"
+            if any(p != "-" for p in pags) else nombre
             for nombre, pags in por_archivo.items()
         )
 
@@ -171,6 +230,7 @@ class RagEngine:
         return self._embeddings
 
     def _open_store(self):
+        from chromadb.config import Settings
         from langchain_chroma import Chroma
 
         return Chroma(
@@ -178,6 +238,8 @@ class RagEngine:
             embedding_function=self._get_embeddings(),
             persist_directory=str(self.persist_dir),
             collection_metadata={"hnsw:space": "cosine"},
+            # Sin telemetría: en la red de Render esa llamada puede colgar el arranque.
+            client_settings=Settings(anonymized_telemetry=False),
         )
 
     def _get_llm(self, model: str, api_key: Optional[str], temperature: float):
@@ -193,7 +255,8 @@ class RagEngine:
         if self._llm_cache_key != cache_key:
             from langchain_groq import ChatGroq
 
-            self._llm = ChatGroq(model=model, temperature=temperature, api_key=key)
+            self._llm = ChatGroq(model=model, temperature=temperature, api_key=key,
+                                 timeout=60, max_retries=1)
             self._llm_cache_key = cache_key
         return self._llm
 
@@ -213,7 +276,6 @@ class RagEngine:
         progress: Optional[ProgressCallback] = None,
         replace: bool = True,
     ) -> IndexStats:
-        from langchain_community.document_loaders import PyPDFLoader
         from langchain_text_splitters import RecursiveCharacterTextSplitter
 
         progress = progress or (lambda f, m: None)
@@ -225,13 +287,13 @@ class RagEngine:
             nombre = os.path.basename(str(path))
             progress(0.2 * i / total, f"Leyendo {nombre}…")
             try:
-                pages = PyPDFLoader(str(path)).load()
+                pages = _cargar_documento(path)
             except Exception as e:
                 avisos.append(f"{nombre}: no se pudo leer ({e})")
                 continue
             con_texto = [p for p in pages if p.page_content.strip()]
             if not con_texto:
-                avisos.append(f"{nombre}: sin texto extraíble (¿PDF escaneado?)")
+                avisos.append(f"{nombre}: sin texto extraíble (¿escaneado o vacío?)")
                 continue
             documents.extend(con_texto)
 
@@ -273,6 +335,12 @@ class RagEngine:
         self._vector_store = store
         archivos = len({nombre_fuente(d) for d in documents})
         return IndexStats(archivos, len(documents), len(chunks), avisos)
+
+    # -- búsqueda por similitud (la usa la tool del agente, Avance 3) -----------
+    def buscar(self, consulta: str, k: int = 6) -> list:
+        if not self.ready:
+            raise RuntimeError("Primero indexa los manuales (o carga un índice existente).")
+        return self._vector_store.similarity_search(consulta, k=k)
 
     # -- recuperar, armar mensajes (Avance 1) y generar -------------------------
     def ask(

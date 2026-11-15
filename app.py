@@ -1,5 +1,6 @@
 """
-app.py — Asistente de Soporte Técnico (RAG + Groq) con interfaz de chat.
+app.py — Asistente de Soporte Técnico (agente con tools + RAG + Groq) con interfaz de chat.
+(Avance 3: /api/ask usa el agente de agent.py. Rama liviana para Render.)
 
     python app.py     →     http://127.0.0.1:5000
     (ábrelo en VS Code con: Ctrl+Shift+P → "Simple Browser: Show")
@@ -19,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 import rag_core as rag  # noqa: E402  (después de cargar el .env)
+from agent import AgenteSoporte  # noqa: E402
 
 MANUALES_DIR = BASE_DIR / "manuales"
 MANUALES_DIR.mkdir(exist_ok=True)
@@ -29,6 +31,7 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 engine = rag.RagEngine()
+agente = AgenteSoporte(engine)
 
 SETTINGS = {
     "api_key": os.getenv("GROQ_API_KEY", "").strip(),
@@ -40,6 +43,12 @@ SETTINGS = {
 LOCK = threading.Lock()
 STATE = {"state": "idle", "progress": 0.0, "message": "", "error": None,
          "result": None, "id": 0, "docs": []}
+
+
+def archivos_manuales() -> list[str]:
+    """Archivos con formato soportado (PDF, TXT, HTML) en manuales/."""
+    return sorted(str(p) for p in MANUALES_DIR.iterdir()
+                  if p.is_file() and p.suffix.lower() in rag.EXTENSIONES_SOPORTADAS)
 
 
 def log(msg: str):
@@ -104,7 +113,7 @@ def clean_name(name: str) -> str:
 def bootstrap():
     """Al arrancar: abre el índice guardado o, la primera vez, indexa manuales/."""
     hay_indice = rag.PERSIST_DIR.exists()
-    pdfs = sorted(str(p) for p in MANUALES_DIR.glob("*.pdf"))
+    pdfs = archivos_manuales()
     if not hay_indice and not pdfs:
         return
 
@@ -132,7 +141,8 @@ def status():
         docs = list(STATE["docs"])
     count = engine.count() if (engine.ready and task["state"] != "running") else None
     return jsonify(ready=engine.ready, count=count, docs=docs, task=task,
-                   has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"])
+                   has_key=bool(SETTINGS["api_key"]), model=SETTINGS["model"], k=SETTINGS["k"],
+                   web_enabled=bool(os.getenv("TAVILY_API_KEY", "").strip()))
 
 
 @app.post("/api/upload")
@@ -163,7 +173,7 @@ def sync():
     """Indexa los PDFs de la carpeta manuales/ que todavía no están en el índice."""
     if STATE["state"] == "running":
         return jsonify(error="Estoy ocupado indexando, espera a que termine."), 409
-    nuevos = [str(p) for p in sorted(MANUALES_DIR.glob("*.pdf")) if p.name not in STATE["docs"]]
+    nuevos = [p for p in archivos_manuales() if os.path.basename(p) not in STATE["docs"]]
     if not nuevos:
         return jsonify(started=False, message="No hay manuales nuevos en la carpeta manuales/.")
     run_task("Preparando…", lambda: index_job(nuevos))
@@ -183,7 +193,8 @@ def ask():
     if not SETTINGS["api_key"]:
         return jsonify(error="Falta la API key de Groq.", code="no_key"), 400
     try:
-        res = engine.ask(pregunta, k=SETTINGS["k"], model=SETTINGS["model"], api_key=SETTINGS["api_key"])
+        res = agente.responder(pregunta, historial=None, k=SETTINGS["k"],
+                               model=SETTINGS["model"], api_key=SETTINGS["api_key"], sid="web")
     except Exception as exc:
         traceback.print_exc()
         return jsonify(error=(str(exc).strip() or type(exc).__name__)[:500]), 500
@@ -191,10 +202,16 @@ def ask():
         respuesta=res.respuesta,
         error_parseo=res.error_parseo,
         respuesta_cruda=res.respuesta_cruda,
-        fuentes=res.fuentes(),
-        prompt=res.prompt_texto(),
-        fragmentos=[{"fuente": rag.nombre_fuente(d), "pagina": rag.numero_pagina(d), "texto": d.page_content}
-                    for d in res.fragmentos],
+        # Fuentes separadas por origen (salen de lo que devolvieron las tools):
+        fuentes=res.fuentes_base(),
+        fragmentos=res.fragmentos,           # base: documento, página y texto
+        web=res.resultados_web,              # web: título, URL y extracto
+        # Trazabilidad del agente:
+        tools=res.tools_usadas,
+        llamadas_llm=res.llamadas_llm,
+        tokens=res.tokens,
+        tiempo_s=round(res.tiempo_s, 2),
+        limite_alcanzado=res.limite_alcanzado,
     )
 
 
